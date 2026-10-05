@@ -110,12 +110,49 @@
         <div class="flex items-center space-x-2">
           <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
           <h2 class="text-xs font-heading uppercase tracking-wider font-bold text-gray-300">Cluster & Project Admission Environment</h2>
-          <span class="text-xs text-rh-muted">(Simulates Namespace Annotations & Assigned ServiceAccount Roles)</span>
+          <span class="text-xs text-rh-muted">(Import from cluster YAML, or edit manually)</span>
         </div>
         <button id="closeDrawerBtn" class="text-gray-400 hover:text-white text-xs flex items-center space-x-1">
           <span>Minimize</span>
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path></svg>
         </button>
+      </div>
+
+      <!-- Import cluster context from oc exports -->
+      <div class="mb-4 rounded-lg border border-rh-border bg-[#141416] p-3 text-xs">
+        <div class="flex flex-wrap items-start justify-between gap-3 mb-2">
+          <div>
+            <div class="text-gray-200 font-semibold text-xs">Import cluster context from YAML</div>
+            <p class="text-[11px] text-rh-muted mt-1 max-w-3xl leading-relaxed">
+              Export your namespace + RoleBindings on the cluster, then paste or upload them here.
+              The app fills UID range, MCS, and which SCCs the ServiceAccount can use. Nothing is sent to a server.
+            </p>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <label class="cursor-pointer px-2.5 py-1.5 rounded-md bg-rh-accent/20 hover:bg-rh-accent/30 border border-rh-accent/40 text-blue-200 text-[11px] font-medium">
+              Upload YAML files
+              <input id="ctxImportFiles" type="file" accept=".yaml,.yml,.json,text/yaml,application/yaml,application/json" multiple class="hidden">
+            </label>
+            <button id="ctxImportPasteBtn" type="button" class="px-2.5 py-1.5 rounded-md bg-[#2B2B2F] hover:bg-[#35353A] border border-rh-border text-gray-200 text-[11px] font-medium">
+              Apply pasted YAML
+            </button>
+          </div>
+        </div>
+
+        <details open class="mb-2">
+          <summary class="cursor-pointer text-gray-300 hover:text-white select-none text-[11px]">Commands to fetch the YAML</summary>
+          <div class="mt-2 relative">
+            <pre id="ocContextExport" class="bg-black p-2.5 rounded font-mono text-[10px] text-gray-300 overflow-x-auto border border-gray-800 whitespace-pre-wrap leading-relaxed"></pre>
+            <button type="button" onclick="copySnippet('ocContextExport')" class="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px]">Copy</button>
+          </div>
+          <p class="text-[10px] text-rh-muted mt-1.5">
+            Minimum useful set: <span class="font-mono text-gray-400">ns.yaml</span> + <span class="font-mono text-gray-400">rb.yaml</span>.
+            Add <span class="font-mono text-gray-400">crb-scc.yaml</span> if elevated SCCs were granted cluster-wide.
+          </p>
+        </details>
+
+        <textarea id="ctxImportEditor" spellcheck="false" rows="4" class="w-full bg-rh-dark border border-rh-border rounded px-2.5 py-2 text-[11px] font-mono text-gray-200 focus:border-rh-accent resize-y" placeholder="# Paste oc get ... -o yaml here (Namespace, RoleBinding, ClusterRoleBinding — multi-doc OK)"></textarea>
+        <p id="ctxImportStatus" class="mt-2 text-[11px] text-rh-muted min-h-[1.25rem]"></p>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
@@ -153,7 +190,12 @@
 
       <!-- Candidate SCC Checklist -->
       <div class="mt-4 pt-3 border-t border-rh-border/50">
-        <label class="block text-xs font-semibold text-gray-300 mb-2">Available SCCs for ServiceAccount (Simulated ClusterRoles):</label>
+        <label class="block text-xs font-semibold text-gray-300 mb-1">SCCs this ServiceAccount may use</label>
+        <p class="text-[11px] text-rh-muted mb-3 leading-relaxed max-w-5xl">
+          Prefer <span class="text-gray-300">Import cluster context</span> above. Or tick manually:
+          a new project almost always has only <span class="font-mono text-gray-300">restricted-v2</span>
+          (via <span class="font-mono">system:authenticated</span>). Elevated SCCs appear only after a cluster-admin grant.
+        </p>
         <div class="flex flex-wrap items-center gap-3 text-xs">
           <label class="flex items-center space-x-1.5 bg-rh-dark border border-rh-border px-2.5 py-1 rounded cursor-pointer hover:border-gray-500">
             <input type="checkbox" id="scc_restricted_v2" checked class="rounded bg-black border-gray-600 text-rh-red focus:ring-0">
@@ -184,6 +226,20 @@
             <span class="text-[10px] text-red-400 font-bold">(Priority unset)</span>
           </label>
         </div>
+
+        <details class="mt-3 text-[11px] text-rh-muted">
+          <summary class="cursor-pointer text-gray-300 hover:text-white select-none">Verify admission on the cluster (optional)</summary>
+          <div class="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div class="bg-[#141416] border border-rh-border rounded p-2.5">
+              <div class="text-gray-400 mb-1">Which SCC would this SA get for a file?</div>
+              <pre id="ocSccSubjectReview" class="font-mono text-[10px] text-gray-300 overflow-x-auto whitespace-pre-wrap">oc adm policy scc-subject-review -z default -n prod-workloads -f workload.yaml</pre>
+            </div>
+            <div class="bg-[#141416] border border-rh-border rounded p-2.5">
+              <div class="text-gray-400 mb-1">Who can <span class="font-mono">use</span> a named SCC?</div>
+              <pre id="ocSccWhoCan" class="font-mono text-[10px] text-gray-300 overflow-x-auto whitespace-pre-wrap">oc adm policy who-can use sccs/restricted-v2</pre>
+            </div>
+          </div>
+        </details>
       </div>
     </div>
   </div>
@@ -1286,12 +1342,227 @@ spec:
       evaluateSccAdmission();
     }
 
+    function syncSccCheckboxesFromState() {
+      Object.keys(state.clusterSccs).forEach((name) => {
+        const id = `scc_${name.replaceAll('-', '_')}`;
+        const checkbox = document.getElementById(id);
+        if (checkbox) checkbox.checked = !!state.clusterSccs[name];
+      });
+      updateSccBadge();
+    }
+
+    function loadYamlDocuments(raw) {
+      const lib = yamlLib();
+      const docs = [];
+      if (typeof lib.loadAll === 'function') {
+        lib.loadAll(raw, (doc) => { if (doc && typeof doc === 'object') docs.push(doc); });
+        return docs;
+      }
+      const single = lib.load(raw);
+      if (!single) return [];
+      if (Array.isArray(single)) return single.filter((d) => d && typeof d === 'object');
+      return [single];
+    }
+
+    function expandDocs(docs) {
+      const out = [];
+      for (const doc of docs) {
+        if (!doc) continue;
+        if (doc.kind && String(doc.kind).endsWith('List') && Array.isArray(doc.items)) {
+          out.push(...doc.items);
+        } else {
+          out.push(doc);
+        }
+      }
+      return out;
+    }
+
+    function sccNameFromRoleRef(roleRef) {
+      if (!roleRef || !roleRef.name) return null;
+      const name = String(roleRef.name);
+      const m = name.match(/^system:openshift:scc:(.+)$/) || name.match(/^scc:(.+)$/);
+      if (!m) return null;
+      return m[1];
+    }
+
+    function subjectMatchesServiceAccount(subject, ns, sa) {
+      if (!subject) return false;
+      const kind = String(subject.kind || '');
+      const name = String(subject.name || '');
+      const subjectNs = subject.namespace || ns;
+
+      if (kind === 'ServiceAccount' && name === sa && subjectNs === ns) return true;
+      if (kind === 'User' && name === `system:serviceaccount:${ns}:${sa}`) return true;
+      if (kind === 'Group') {
+        if (name === 'system:serviceaccounts') return true;
+        if (name === `system:serviceaccounts:${ns}`) return true;
+        // OpenShift default: every authenticated identity can use restricted-v2
+        if (name === 'system:authenticated' || name === 'system:authenticated:oauth') return true;
+      }
+      return false;
+    }
+
+    function setImportStatus(msg, ok) {
+      if (!el.ctxImportStatus) return;
+      el.ctxImportStatus.textContent = msg;
+      el.ctxImportStatus.className = ok
+        ? 'mt-2 text-[11px] text-emerald-400 min-h-[1.25rem]'
+        : 'mt-2 text-[11px] text-amber-300 min-h-[1.25rem]';
+    }
+
+    function importClusterContextYaml(raw) {
+      if (!raw || !raw.trim()) {
+        setImportStatus('Paste or upload Namespace / RoleBinding YAML first.', false);
+        return;
+      }
+
+      let docs;
+      try {
+        docs = expandDocs(loadYamlDocuments(raw));
+      } catch (err) {
+        setImportStatus(`YAML parse error: ${err.message}`, false);
+        return;
+      }
+
+      if (!docs.length) {
+        setImportStatus('No Kubernetes objects found in the YAML.', false);
+        return;
+      }
+
+      const notes = [];
+      let foundNs = false;
+      let foundBinding = false;
+      const granted = new Set();
+
+      // Prefer explicit ServiceAccount from YAML if present
+      const saDocs = docs.filter((d) => d.kind === 'ServiceAccount');
+      if (saDocs.length === 1 && saDocs[0].metadata?.name) {
+        el.ctxServiceAccount.value = saDocs[0].metadata.name;
+        if (saDocs[0].metadata.namespace) el.ctxNamespace.value = saDocs[0].metadata.namespace;
+        notes.push(`ServiceAccount ${saDocs[0].metadata.name}`);
+      }
+
+      for (const doc of docs) {
+        if (doc.kind === 'Namespace' || doc.kind === 'Project') {
+          const name = doc.metadata?.name;
+          const ann = doc.metadata?.annotations || {};
+          if (name) el.ctxNamespace.value = name;
+          if (ann['openshift.io/sa.scc.uid-range']) {
+            el.ctxUidRange.value = ann['openshift.io/sa.scc.uid-range'];
+          }
+          if (ann['openshift.io/sa.scc.mcs']) {
+            el.ctxMcsCategory.value = ann['openshift.io/sa.scc.mcs'];
+          }
+          foundNs = true;
+          notes.push(`${doc.kind} ${name || ''}`.trim());
+        }
+      }
+
+      const ns = el.ctxNamespace.value.trim() || 'prod-workloads';
+      const sa = el.ctxServiceAccount.value.trim() || 'default';
+
+      for (const doc of docs) {
+        if (doc.kind !== 'RoleBinding' && doc.kind !== 'ClusterRoleBinding') continue;
+        const scc = sccNameFromRoleRef(doc.roleRef);
+        if (!scc) continue;
+        foundBinding = true;
+        const subjects = doc.subjects || [];
+        // Also honor older SCC.users / groups if someone pasted an SCC object mixed in
+        const matches = subjects.some((s) => subjectMatchesServiceAccount(s, ns, sa));
+        if (matches) {
+          granted.add(scc);
+          notes.push(`${doc.kind}/${doc.metadata?.name || '?'} → ${scc}`);
+        }
+      }
+
+      // SCC objects may list users/groups directly (legacy / oc get scc)
+      for (const doc of docs) {
+        if (doc.kind !== 'SecurityContextConstraints') continue;
+        const sccName = doc.metadata?.name;
+        if (!sccName) continue;
+        const users = doc.users || [];
+        const groups = doc.groups || [];
+        const userHit = users.includes(`system:serviceaccount:${ns}:${sa}`);
+        const groupHit = groups.includes('system:authenticated')
+          || groups.includes('system:authenticated:oauth')
+          || groups.includes('system:serviceaccounts')
+          || groups.includes(`system:serviceaccounts:${ns}`);
+        if (userHit || groupHit) {
+          granted.add(sccName);
+          notes.push(`SCC ${sccName} users/groups`);
+        }
+      }
+
+      // OpenShift baseline: system:authenticated can use restricted-v2 even if that CRB was not exported
+      granted.add('restricted-v2');
+      if (!foundBinding) {
+        notes.push('no SCC RoleBinding matched SA — kept default restricted-v2');
+      }
+
+      // Only flip checkboxes for SCCs this simulator knows
+      Object.keys(state.clusterSccs).forEach((name) => {
+        state.clusterSccs[name] = granted.has(name);
+      });
+      // Surface unknown granted SCCs in the status (custom SCCs)
+      const unknown = [...granted].filter((n) => !SCC_DEFINITIONS[n]);
+      syncSccCheckboxesFromState();
+      updateUidHint();
+      updateRbacSnippets();
+      evaluateSccAdmission();
+
+      const grantedKnown = Object.keys(state.clusterSccs).filter((n) => state.clusterSccs[n]);
+      let msg = `Imported ${docs.length} object(s).`;
+      if (foundNs) msg += ` Namespace annotations applied.`;
+      msg += ` SCCs for ${sa}: ${grantedKnown.join(', ') || 'none'}.`;
+      if (unknown.length) msg += ` Ignored custom SCC(s) not in simulator: ${unknown.join(', ')}.`;
+      if (!foundNs && !foundBinding) {
+        setImportStatus(msg + ' Tip: include `oc get ns … -o yaml` and RoleBindings.', false);
+      } else {
+        setImportStatus(msg, true);
+      }
+    }
+
+    async function importClusterContextFiles(fileList) {
+      const files = [...(fileList || [])];
+      if (!files.length) return;
+      const parts = [];
+      for (const f of files) {
+        parts.push(await f.text());
+      }
+      const merged = parts.join('\n---\n');
+      if (el.ctxImportEditor) el.ctxImportEditor.value = merged;
+      importClusterContextYaml(merged);
+    }
+
     function updateRbacSnippets() {
       const ns = el.ctxNamespace.value.trim() || 'prod-workloads';
       const sa = el.ctxServiceAccount.value.trim() || 'default';
       const targetScc = state.suggestedScc || 'anyuid';
 
       el.cliGrantCmd.textContent = `oc adm policy add-scc-to-user ${targetScc} -z ${sa} -n ${ns}`;
+      if (el.ocContextExport) {
+        el.ocContextExport.textContent = `# 1) Namespace UID range + MCS annotations
+oc get ns ${ns} -o yaml > ns.yaml
+
+# 2) Project RoleBindings (SCC grants from add-scc-to-user land here)
+oc get rolebinding -n ${ns} -o yaml > rb.yaml
+
+# 3) ClusterRoleBindings that grant SCCs (optional but useful)
+oc get clusterrolebinding -o name | grep ':scc:' | while read -r r; do oc get "$r" -o yaml; echo '---'; done > crb-scc.yaml
+
+# Optional: ServiceAccount + stock SCC defs
+oc get sa ${sa} -n ${ns} -o yaml > sa.yaml
+oc get scc restricted-v2 nonroot-v2 hostnetwork-v2 anyuid privileged -o yaml > sccs.yaml
+
+# Then upload ns.yaml + rb.yaml (+ crb-scc.yaml) above, or paste them.`;
+      }
+      if (el.ocSccSubjectReview) {
+        el.ocSccSubjectReview.textContent = `oc adm policy scc-subject-review -z ${sa} -n ${ns} -f workload.yaml`;
+      }
+      if (el.ocSccWhoCan) {
+        el.ocSccWhoCan.textContent = `oc adm policy who-can use sccs/restricted-v2
+oc adm policy who-can use sccs/${targetScc}`;
+      }
       el.yamlRoleBindingSnippet.textContent = `apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -1336,7 +1607,9 @@ roleRef:
         'mutationsContainer', 'violationCountBadge', 'mutationCountBadge', 'clusterDrawer',
         'toggleClusterDrawerBtn', 'closeDrawerBtn', 'activeSccCountBadge', 'ctxNamespace',
         'ctxServiceAccount', 'ctxUidRange', 'ctxMcsCategory', 'uidRangeHint', 'cliGrantCmd',
-        'yamlRoleBindingSnippet', 'validateBtn', 'autoFixBtn', 'copyYamlBtn', 'evalOrderRow'
+        'yamlRoleBindingSnippet', 'validateBtn', 'autoFixBtn', 'copyYamlBtn', 'evalOrderRow',
+        'ocSccSubjectReview', 'ocSccWhoCan', 'ocContextExport', 'ctxImportEditor',
+        'ctxImportStatus', 'ctxImportFiles', 'ctxImportPasteBtn'
       ].forEach((id) => { el[id] = document.getElementById(id); });
     }
 
@@ -1346,6 +1619,7 @@ roleRef:
       updateGutter();
       updateUidHint();
       updateSccBadge();
+      updateRbacSnippets();
 
       document.querySelectorAll('.preset-btn').forEach((btn) => {
         btn.addEventListener('click', (e) => {
@@ -1389,6 +1663,19 @@ roleRef:
           evaluateSccAdmission();
         });
       });
+
+      if (el.ctxImportPasteBtn) {
+        el.ctxImportPasteBtn.addEventListener('click', () => {
+          importClusterContextYaml(el.ctxImportEditor?.value || '');
+        });
+      }
+      if (el.ctxImportFiles) {
+        el.ctxImportFiles.addEventListener('change', (e) => {
+          importClusterContextFiles(e.target.files).finally(() => {
+            e.target.value = '';
+          });
+        });
+      }
 
       el.validateBtn.addEventListener('click', evaluateSccAdmission);
       el.autoFixBtn.addEventListener('click', autoFixYaml);
