@@ -12,6 +12,25 @@ Paste a workload YAML, set (or import) the project / ServiceAccount context, and
 
 Live app: https://vinashar-rh.github.io/scc-validator/
 
+## When to use it
+
+Use this tool when you need to **reason about SCC admission without burning cluster iterations** — especially before you have access, or while you explain a failure to someone else.
+
+**Good fits**
+
+- A pod / Deployment is rejected with `unable to validate against any security context constraint` and you want a clear field-level why
+- You are deciding whether to **fix the workload** for `restricted-v2` or ask for a higher SCC (`anyuid`, `hostnetwork-v2`, `privileged`)
+- Training / demos: show how UID 0, HostPath, `hostPort`, and privileged DaemonSets fail under a normal project
+- Reviewing a PR manifest offline (laptop, no `oc` login) before applying it
+- Checking what OpenShift would **mutate** (injected UID, seccomp, `openshift.io/scc`, etc.) if admission succeeded
+- Sharing a failing case with a teammate via **Copy share link**
+
+**Not the right tool when**
+
+- You need a definitive cluster answer → use `oc create --dry-run=server` / `oc adm policy scc-subject-review`
+- The deny involves a **custom SCC**, image `USER`, or Pod Security Admission (PSA) on top of SCCs
+- You must prove what is granted in a live project → export RoleBindings / run `oc adm policy who-can use sccs/...` (then import here if you want)
+
 This is a **teaching / diagnostics workbench**, not a replacement for the API server. Always confirm on-cluster with:
 
 ```bash
