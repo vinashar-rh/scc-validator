@@ -165,6 +165,24 @@
     .editor-gutter { background: #15171b; color: #6a6e73; border-right: 1px solid #3c3f42; }
     .status-ok { color: var(--ok); }
     .status-warn { color: var(--warn); }
+    .finding { cursor: pointer; }
+    .finding:hover { background: #f8f8fb; }
+    .finding:focus-visible { outline: 2px solid #0066cc; outline-offset: 1px; }
+    .jump-line {
+      font-family: "Red Hat Mono", monospace;
+      font-size: 0.65rem;
+      color: var(--mute);
+      border: 1px solid var(--line);
+      padding: 0.1rem 0.35rem;
+      background: #fff;
+      white-space: nowrap;
+    }
+    .gutter-line--flash { background: rgba(201, 25, 11, 0.35); color: #fff; }
+    #yamlEditor.flash-select { caret-color: transparent; }
+    .preset[data-preset="hostport"] { border-left: 3px solid #0066cc; }
+    .preset[data-preset="uidrange"] { border-left: 3px solid #795600; }
+    .preset[data-preset="anyuidwins"] { border-left: 3px solid #009596; }
+    .preset[data-preset="nfs"] { border-left: 3px solid #8a8d90; }
   </style>
 </head>
 <body class="text-ink font-sans min-h-screen flex flex-col antialiased">
@@ -183,6 +201,7 @@
           Cluster context
           <span id="activeSccCountBadge" class="font-mono text-[10px] text-mute">1 SCC</span>
         </button>
+        <button id="shareLinkBtn" type="button" class="btn" title="Copy a URL with this YAML and cluster context">Copy share link</button>
         <button id="autoFixBtn" type="button" class="btn">Auto-fix for restricted-v2</button>
         <button id="validateBtn" type="button" class="btn btn-primary">Evaluate admission</button>
       </div>
@@ -316,7 +335,11 @@
           <span class="text-mute text-[11px] mr-1 hidden sm:inline">Samples</span>
           <button type="button" data-preset="root" class="preset-btn preset">UID 0 root</button>
           <button type="button" data-preset="hostpath" class="preset-btn preset">HostPath</button>
+          <button type="button" data-preset="hostport" class="preset-btn preset">hostPort</button>
+          <button type="button" data-preset="uidrange" class="preset-btn preset">UID out of range</button>
+          <button type="button" data-preset="nfs" class="preset-btn preset">NFS volume</button>
           <button type="button" data-preset="daemonset" class="preset-btn preset">Privileged agent</button>
+          <button type="button" data-preset="anyuidwins" class="preset-btn preset">anyuid priority</button>
           <button type="button" data-preset="compliant" class="preset-btn preset">Clean microservice</button>
         </div>
       </div>
@@ -533,7 +556,141 @@ spec:
             drop:
             - ALL
             add:
-            - NET_BIND_SERVICE`
+            - NET_BIND_SERVICE`,
+
+      hostport: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-proxy
+  namespace: prod-workloads
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: edge-proxy
+  template:
+    metadata:
+      labels:
+        app: edge-proxy
+    spec:
+      serviceAccountName: default
+      containers:
+      - name: proxy
+        image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+        ports:
+        - containerPort: 8080
+          hostPort: 8080
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+            add: ["NET_BIND_SERVICE"]`,
+
+      uidrange: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fixed-uid-app
+  namespace: prod-workloads
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fixed-uid
+  template:
+    metadata:
+      labels:
+        app: fixed-uid
+    spec:
+      serviceAccountName: default
+      containers:
+      - name: app
+        image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+        securityContext:
+          runAsUser: 1001
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+            add: ["NET_BIND_SERVICE"]`,
+
+      nfs: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: report-writer
+  namespace: prod-workloads
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: report-writer
+  template:
+    metadata:
+      labels:
+        app: report-writer
+    spec:
+      serviceAccountName: default
+      volumes:
+      - name: reports
+        nfs:
+          server: nfs.example.com
+          path: /exports/reports
+      containers:
+      - name: writer
+        image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+        volumeMounts:
+        - name: reports
+          mountPath: /data
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+            add: ["NET_BIND_SERVICE"]`,
+
+      anyuidwins: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clean-but-anyuid-wins
+  namespace: prod-workloads
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clean-anyuid
+  template:
+    metadata:
+      labels:
+        app: clean-anyuid
+    spec:
+      serviceAccountName: default
+      containers:
+      - name: api
+        image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+            add: ["NET_BIND_SERVICE"]`
+    };
+
+    // Optional SCC checkbox overrides when loading a sample
+    const PRESET_CONTEXT = {
+      anyuidwins: {
+        clusterSccs: {
+          'restricted-v2': true,
+          'nonroot-v2': false,
+          'hostnetwork-v2': false,
+          anyuid: true,
+          privileged: false
+        }
+      },
+      hostport: {
+        clusterSccs: {
+          'restricted-v2': true,
+          'nonroot-v2': false,
+          'hostnetwork-v2': false,
+          anyuid: false,
+          privileged: false
+        }
+      }
     };
 
     const WORKLOAD_KINDS = [
@@ -1087,6 +1244,239 @@ spec:
       return Promise.resolve();
     }
 
+    function bytesToBase64Url(bytes) {
+      let bin = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+      }
+      return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    }
+
+    function base64UrlToBytes(str) {
+      const pad = str.length % 4 === 0 ? '' : '='.repeat(4 - (str.length % 4));
+      const b64 = str.replace(/-/g, '+').replace(/_/g, '/') + pad;
+      const bin = atob(b64);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    }
+
+    function stringToBase64Url(str) {
+      return bytesToBase64Url(new TextEncoder().encode(str));
+    }
+
+    function base64UrlToString(str) {
+      return new TextDecoder().decode(base64UrlToBytes(str));
+    }
+
+    function collectShareState() {
+      return {
+        y: el.yamlEditor.value,
+        n: el.ctxNamespace.value,
+        a: el.ctxServiceAccount.value,
+        u: el.ctxUidRange.value,
+        m: el.ctxMcsCategory.value,
+        s: Object.keys(state.clusterSccs).filter((k) => state.clusterSccs[k])
+      };
+    }
+
+    async function encodeSharePayload(obj) {
+      const json = JSON.stringify(obj);
+      try {
+        if (typeof CompressionStream !== 'undefined') {
+          const stream = new Blob([new TextEncoder().encode(json)]).stream().pipeThrough(new CompressionStream('gzip'));
+          const buf = new Uint8Array(await new Response(stream).arrayBuffer());
+          return 'g1.' + bytesToBase64Url(buf);
+        }
+      } catch (_) { /* fall through */ }
+      return 'u1.' + stringToBase64Url(json);
+    }
+
+    async function decodeSharePayload(token) {
+      if (!token) return null;
+      const dot = token.indexOf('.');
+      if (dot < 0) return null;
+      const kind = token.slice(0, dot);
+      const data = token.slice(dot + 1);
+      if (!data) return null;
+      let json;
+      if (kind === 'g1' && typeof DecompressionStream !== 'undefined') {
+        const bytes = base64UrlToBytes(data);
+        const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+        json = await new Response(stream).text();
+      } else if (kind === 'u1') {
+        json = base64UrlToString(data);
+      } else {
+        return null;
+      }
+      return JSON.parse(json);
+    }
+
+    function applyShareState(payload) {
+      if (!payload || typeof payload !== 'object') return false;
+      state.restoringShare = true;
+      if (typeof payload.y === 'string') el.yamlEditor.value = payload.y;
+      if (typeof payload.n === 'string') el.ctxNamespace.value = payload.n;
+      if (typeof payload.a === 'string') el.ctxServiceAccount.value = payload.a;
+      if (typeof payload.u === 'string') el.ctxUidRange.value = payload.u;
+      if (typeof payload.m === 'string') el.ctxMcsCategory.value = payload.m;
+      if (Array.isArray(payload.s)) {
+        Object.keys(state.clusterSccs).forEach((k) => { state.clusterSccs[k] = false; });
+        payload.s.forEach((k) => {
+          if (k in state.clusterSccs) state.clusterSccs[k] = true;
+        });
+        if (!payload.s.length) state.clusterSccs['restricted-v2'] = true;
+        syncSccCheckboxesFromState();
+      }
+      updateGutter();
+      updateUidHint();
+      updateSccBadge();
+      updateRbacSnippets();
+      evaluateSccAdmission();
+      state.restoringShare = false;
+      return true;
+    }
+
+    let shareTimer = null;
+    function scheduleShareUrlSync() {
+      if (state.restoringShare) return;
+      clearTimeout(shareTimer);
+      shareTimer = setTimeout(() => { syncShareUrl(false); }, 900);
+    }
+
+    async function syncShareUrl(pushHistory) {
+      try {
+        const token = await encodeSharePayload(collectShareState());
+        const url = new URL(window.location.href);
+        url.hash = 's=' + token;
+        if (pushHistory) {
+          history.pushState(null, '', url.toString());
+        } else {
+          history.replaceState(null, '', url.toString());
+        }
+        return url.toString();
+      } catch (err) {
+        console.warn('share url sync failed', err);
+        return window.location.href;
+      }
+    }
+
+    async function copyShareLink() {
+      const url = await syncShareUrl(true);
+      await copyText(url);
+      if (el.shareLinkBtn) {
+        const prev = el.shareLinkBtn.textContent;
+        el.shareLinkBtn.textContent = 'Link copied';
+        setTimeout(() => { el.shareLinkBtn.textContent = prev; }, 1600);
+      }
+    }
+
+    async function restoreShareFromLocation() {
+      const hash = window.location.hash.replace(/^#/, '');
+      if (!hash.startsWith('s=')) return false;
+      try {
+        const payload = await decodeSharePayload(hash.slice(2));
+        return applyShareState(payload);
+      } catch (err) {
+        console.warn('share restore failed', err);
+        return false;
+      }
+    }
+
+    function parseFieldHints(field) {
+      const parts = String(field || '').split('.');
+      const leaf = (parts[parts.length - 1] || '').replace(/\[.*?\]/g, '');
+      const container = (field.match(/(?:initContainers|containers|ephemeralContainers)\[([^\]]+)\]/) || [])[1];
+      const volume = (field.match(/volumes\[(?:name=)?([^\]]+)\]/) || [])[1];
+      return { leaf, container, volume };
+    }
+
+    function locateYamlLine(yaml, field) {
+      if (!yaml || !field) return null;
+      const lines = yaml.split('\n');
+      const { leaf, container, volume } = parseFieldHints(field);
+      if (!leaf) return null;
+
+      let searchFrom = 0;
+      const nameRe = (name) => new RegExp(`^\\s*-?\\s*name:\\s*["']?${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']?\\s*$`);
+
+      if (container) {
+        const idx = lines.findIndex((l) => nameRe(container).test(l));
+        if (idx >= 0) searchFrom = idx;
+      }
+      if (volume) {
+        const idx = lines.findIndex((l) => nameRe(volume).test(l));
+        if (idx >= 0) searchFrom = idx;
+      }
+
+      const keyRe = new RegExp(`^\\s*${leaf.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:`);
+      for (let i = searchFrom; i < lines.length; i++) {
+        if (keyRe.test(lines[i])) return i + 1;
+      }
+      for (let i = 0; i < lines.length; i++) {
+        if (keyRe.test(lines[i])) return i + 1;
+      }
+      return null;
+    }
+
+    function jumpToYamlLine(lineNum) {
+      if (!lineNum || !el.yamlEditor) return;
+      const text = el.yamlEditor.value;
+      const lines = text.split('\n');
+      const idx = Math.max(0, Math.min(lines.length, lineNum) - 1);
+      let start = 0;
+      for (let i = 0; i < idx; i++) start += lines[i].length + 1;
+      const end = start + lines[idx].length;
+
+      el.yamlEditor.focus();
+      el.yamlEditor.setSelectionRange(start, end);
+      const styles = window.getComputedStyle(el.yamlEditor);
+      const lineHeight = parseFloat(styles.lineHeight) || (parseFloat(styles.fontSize) * 1.5);
+      const paddingTop = parseFloat(styles.paddingTop) || 0;
+      el.yamlEditor.scrollTop = Math.max(0, (idx * lineHeight) - (el.yamlEditor.clientHeight / 3) + paddingTop);
+      el.gutter.scrollTop = el.yamlEditor.scrollTop;
+
+      // Flash gutter line
+      let g = '';
+      for (let i = 1; i <= Math.max(lines.length, 1); i++) {
+        if (i === lineNum) g += `<span class="gutter-line--flash">${i}</span>\n`;
+        else g += `${i}\n`;
+      }
+      el.gutter.innerHTML = g;
+      el.yamlEditor.classList.add('flash-select');
+      clearTimeout(state.jumpFlashTimer);
+      state.jumpFlashTimer = setTimeout(() => {
+        el.yamlEditor.classList.remove('flash-select');
+        updateGutter();
+      }, 1400);
+    }
+
+    function attachLineNumbers(violations) {
+      const yaml = el.yamlEditor.value;
+      return violations.map((v) => ({
+        ...v,
+        line: locateYamlLine(yaml, v.field)
+      }));
+    }
+
+    function loadPreset(name) {
+      if (!PRESETS[name]) return;
+      el.yamlEditor.value = PRESETS[name];
+      const ctx = PRESET_CONTEXT[name];
+      if (ctx?.clusterSccs) {
+        Object.keys(state.clusterSccs).forEach((k) => {
+          state.clusterSccs[k] = !!ctx.clusterSccs[k];
+        });
+        syncSccCheckboxesFromState();
+      }
+      updateGutter();
+      updateUidHint();
+      updateSccBadge();
+      evaluateSccAdmission();
+      scheduleShareUrlSync();
+    }
+
     function evaluateSccAdmission() {
       state.violations = [];
       state.mutations = [];
@@ -1166,6 +1556,7 @@ spec:
       }
 
       updateRbacSnippets();
+      scheduleShareUrlSync();
     }
 
     function renderAdmissionSuccess(sccName, mutations, orderText, evaluationOrder) {
@@ -1193,11 +1584,19 @@ spec:
     }
 
     function renderViolationCard(v) {
+      const line = v.line || locateYamlLine(el.yamlEditor.value, v.field);
+      const lineAttr = line ? ` data-line="${line}"` : '';
+      const lineBadge = line
+        ? `<span class="jump-line" title="Jump to YAML">L${line}</span>`
+        : `<span class="jump-line" title="Line not found">—</span>`;
       return `
-        <div class="finding space-y-2">
+        <div class="finding space-y-2"${lineAttr} role="button" tabindex="0" title="Jump to field in YAML">
           <div class="flex items-start justify-between gap-2">
             <span class="font-mono text-bad font-semibold text-[11px] break-all">${esc(v.field)}</span>
-            <span class="font-mono text-[10px] text-mute whitespace-nowrap">= ${esc(v.val)}</span>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${lineBadge}
+              <span class="font-mono text-[10px] text-mute whitespace-nowrap">= ${esc(v.val)}</span>
+            </div>
           </div>
           <p class="text-ink text-xs">${esc(v.reason)}</p>
           <p class="text-[11px]"><span class="font-bold text-ok">Fix:</span> <span class="text-mute">${esc(v.fix)}</span></p>
@@ -1207,7 +1606,7 @@ spec:
     function renderAdmissionFailure(reports, orderText) {
       el.verdictCard.className = 'verdict verdict--deny';
       el.verdictTitle.innerHTML = `<span class="text-bad">Admission forbidden</span>`;
-      el.verdictSubtitle.textContent = 'Unable to validate against any granted Security Context Constraint.';
+      el.verdictSubtitle.textContent = 'Unable to validate against any granted Security Context Constraint. Click a violation to jump to the YAML line.';
       el.evalOrderRow.textContent = orderText || '';
       el.matchedSccPill.className = 'scc-tag scc-tag--deny';
       el.matchedSccPill.textContent = 'None matched';
@@ -1216,11 +1615,12 @@ spec:
 
       let html = '';
       reports.forEach((r) => {
+        const withLines = attachLineNumbers(r.violations);
         html += `<div class="mb-4">
           <div class="text-[11px] font-heading font-bold text-bad mb-2">
-            Why ${esc(r.sccName)} failed (${r.violations.length})
+            Why ${esc(r.sccName)} failed (${withLines.length})
           </div>
-          <div class="space-y-2">${r.violations.map(renderViolationCard).join('')}</div>
+          <div class="space-y-2">${withLines.map(renderViolationCard).join('')}</div>
         </div>`;
       });
 
@@ -1613,26 +2013,27 @@ roleRef:
         'ctxServiceAccount', 'ctxUidRange', 'ctxMcsCategory', 'uidRangeHint', 'cliGrantCmd',
         'yamlRoleBindingSnippet', 'validateBtn', 'autoFixBtn', 'copyYamlBtn', 'evalOrderRow',
         'ocSccSubjectReview', 'ocSccWhoCan', 'ocContextExport', 'ctxImportEditor',
-        'ctxImportStatus', 'ctxImportFiles', 'ctxImportPasteBtn'
+        'ctxImportStatus', 'ctxImportFiles', 'ctxImportPasteBtn', 'shareLinkBtn'
       ].forEach((id) => { el[id] = document.getElementById(id); });
     }
 
-    window.onload = function () {
+    window.onload = async function () {
       bindEls();
-      el.yamlEditor.value = PRESETS.root;
-      updateGutter();
       updateUidHint();
       updateSccBadge();
       updateRbacSnippets();
 
+      const restored = await restoreShareFromLocation();
+      if (!restored) {
+        el.yamlEditor.value = PRESETS.root;
+        updateGutter();
+        evaluateSccAdmission();
+      }
+
       document.querySelectorAll('.preset-btn').forEach((btn) => {
         btn.addEventListener('click', (e) => {
           const p = e.currentTarget.getAttribute('data-preset');
-          if (PRESETS[p]) {
-            el.yamlEditor.value = PRESETS[p];
-            updateGutter();
-            evaluateSccAdmission();
-          }
+          loadPreset(p);
         });
       });
 
@@ -1671,15 +2072,38 @@ roleRef:
       if (el.ctxImportPasteBtn) {
         el.ctxImportPasteBtn.addEventListener('click', () => {
           importClusterContextYaml(el.ctxImportEditor?.value || '');
+          scheduleShareUrlSync();
         });
       }
       if (el.ctxImportFiles) {
         el.ctxImportFiles.addEventListener('change', (e) => {
           importClusterContextFiles(e.target.files).finally(() => {
             e.target.value = '';
+            scheduleShareUrlSync();
           });
         });
       }
+
+      if (el.shareLinkBtn) {
+        el.shareLinkBtn.addEventListener('click', () => { copyShareLink(); });
+      }
+
+      el.violationsContainer.addEventListener('click', (e) => {
+        const card = e.target.closest('.finding[data-line]');
+        if (!card) return;
+        const line = parseInt(card.getAttribute('data-line'), 10);
+        if (line) jumpToYamlLine(line);
+      });
+      el.violationsContainer.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const card = e.target.closest('.finding[data-line]');
+        if (!card) return;
+        e.preventDefault();
+        const line = parseInt(card.getAttribute('data-line'), 10);
+        if (line) jumpToYamlLine(line);
+      });
+
+      window.addEventListener('hashchange', () => { restoreShareFromLocation(); });
 
       el.validateBtn.addEventListener('click', evaluateSccAdmission);
       el.autoFixBtn.addEventListener('click', autoFixYaml);
@@ -1693,8 +2117,6 @@ roleRef:
       document.getElementById('tabViolationsBtn').addEventListener('click', () => switchTab('violations'));
       document.getElementById('tabMutationsBtn').addEventListener('click', () => switchTab('mutations'));
       document.getElementById('tabRbacBtn').addEventListener('click', () => switchTab('rbac'));
-
-      evaluateSccAdmission();
     };
   </script>
 </body>
