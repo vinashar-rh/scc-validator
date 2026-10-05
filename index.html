@@ -447,6 +447,7 @@ roleRef:
     <code class="font-mono text-ink">oc create --dry-run=server</code>
     or
     <code class="font-mono text-ink">oc adm policy scc-subject-review</code>.
+    Anonymous visit counts via <a href="https://vinashar-scc.goatcounter.com" class="underline decoration-line hover:text-ink">GoatCounter</a>.
   </footer>
 
   <script>
@@ -2119,5 +2120,13 @@ roleRef:
       document.getElementById('tabRbacBtn').addEventListener('click', () => switchTab('rbac'));
     };
   </script>
+  <!-- Hits only. Path is fixed so share-link hashes (which can contain YAML) are never sent. -->
+  <script>
+    window.goatcounter = {
+      path: function () { return '/scc-validator/'; }
+    };
+  </script>
+  <script data-goatcounter="https://vinashar-scc.goatcounter.com/count"
+          async src="https://gc.zgo.at/count.js"></script>
 </body>
 </html>

@@ -166,6 +166,25 @@ Single file app: `index.html` (Tailwind + js-yaml from CDN).
 
 ---
 
+## Visit statistics
+
+GitHub Pages does not show hits on the app URL. The page sends an **anonymous pageview** to [GoatCounter](https://www.goatcounter.com/) (no cookies, no YAML, no cluster data). Share-link hashes are stripped so pasted manifests are not uploaded.
+
+**Dashboard:** https://vinashar-scc.goatcounter.com
+
+**One-time setup (required):** counts stay empty until you create that GoatCounter site.
+
+1. Sign up at https://www.goatcounter.com/signup
+2. When it asks for a **code**, use exactly `vinashar-scc` (must match the script in `index.html`)
+3. Open https://vinashar-scc.goatcounter.com and log in
+4. Load the live app once (ad blockers often hide GoatCounter — try a private window if the first hit is missing)
+
+You should see pageviews within a few seconds. Ad blockers can under-count.
+
+If you already used a different GoatCounter code, change `vinashar-scc` in `index.html` to match.
+
+---
+
 ## License / trademark note
 
 Personal diagnostic tool. Not an official Red Hat product. OpenShift® is a trademark of Red Hat, Inc.
