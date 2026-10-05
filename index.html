@@ -78,7 +78,7 @@
       <div>
         <div class="flex items-center space-x-2">
           <h1 class="font-heading font-bold text-white text-base md:text-lg tracking-tight">OpenShift SCC Diagnostics Workbench</h1>
-          <span class="text-xs px-2 py-0.5 rounded-full bg-rh-red/20 text-red-400 border border-rh-red/30 font-mono">v4.14+ Engine</span>
+          <span class="text-xs px-2 py-0.5 rounded-full bg-rh-red/20 text-red-400 border border-rh-red/30 font-mono">v4.14+ Simulator</span>
         </div>
         <p class="text-xs text-rh-muted">Security Context Constraint (SCC) Admission Evaluator & Linter</p>
       </div>
@@ -89,7 +89,7 @@
       <button id="toggleClusterDrawerBtn" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-md bg-[#2B2B2F] hover:bg-[#35353A] border border-rh-border text-xs font-medium text-gray-200 transition">
         <svg class="w-4 h-4 text-rh-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
         <span>Cluster Context</span>
-        <span id="activeSccCountBadge" class="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-rh-accent text-white font-mono">5 SCCs</span>
+        <span id="activeSccCountBadge" class="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-rh-accent text-white font-mono">1 SCC</span>
       </button>
 
       <button id="autoFixBtn" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-md bg-rh-green hover:bg-green-700 text-white text-xs font-semibold shadow-sm transition">
@@ -175,13 +175,13 @@
           <label class="flex items-center space-x-1.5 bg-rh-dark border border-rh-border px-2.5 py-1 rounded cursor-pointer hover:border-gray-500">
             <input type="checkbox" id="scc_anyuid" class="rounded bg-black border-gray-600 text-rh-red focus:ring-0">
             <span class="font-mono text-gray-200">anyuid</span>
-            <span class="text-[10px] text-rh-gold">(Allows UID 0)</span>
+            <span class="text-[10px] text-rh-gold">(Priority 10 · UID 0)</span>
           </label>
 
           <label class="flex items-center space-x-1.5 bg-rh-dark border border-rh-border px-2.5 py-1 rounded cursor-pointer hover:border-gray-500">
             <input type="checkbox" id="scc_privileged" class="rounded bg-black border-gray-600 text-rh-red focus:ring-0">
             <span class="font-mono text-gray-200">privileged</span>
-            <span class="text-[10px] text-red-400 font-bold">(Unrestricted)</span>
+            <span class="text-[10px] text-red-400 font-bold">(Priority unset)</span>
           </label>
         </div>
       </div>
@@ -268,6 +268,7 @@
           <span class="text-gray-400">Winning SCC Authorization:</span>
           <span id="matchedSccPill" class="px-2.5 py-1 rounded bg-[#2D2D32] border border-rh-border font-mono text-gray-300">Evaluating...</span>
         </div>
+        <div id="evalOrderRow" class="mt-2 text-[10px] text-rh-muted font-mono leading-relaxed"></div>
       </div>
 
       <!-- Violation and Mutation Details Tabs -->
@@ -347,6 +348,11 @@ roleRef:
 
     </section>
   </main>
+
+  <footer class="px-5 py-3 text-[10px] text-rh-muted border-t border-rh-border">
+    Client-side simulator of OpenShift 4.14+ SCC admission: higher priority first, then most restrictive, then name.
+    Not a substitute for <code class="text-gray-400">oc create --dry-run=server</code> or <code class="text-gray-400">oc adm policy scc-subject-review</code>.
+  </footer>
 
   <script>
     const PRESETS = {
@@ -458,50 +464,41 @@ spec:
             - NET_BIND_SERVICE`
     };
 
-    const state = {
-      parsedYaml: null,
-      rawYaml: '',
-      violations: [],
-      mutations: [],
-      matchedScc: null,
-      admitted: false,
-      clusterSccs: {
-        'restricted-v2': true,
-        'nonroot-v2': false,
-        'hostnetwork-v2': false,
-        'anyuid': false,
-        'privileged': false
-      }
-    };
+    const WORKLOAD_KINDS = [
+      'Deployment', 'StatefulSet', 'DaemonSet', 'Job',
+      'ReplicaSet', 'ReplicationController', 'DeploymentConfig'
+    ];
 
-    const el = {
-      yamlEditor: document.getElementById('yamlEditor'),
-      gutter: document.getElementById('gutter'),
-      detectedKind: document.getElementById('detectedKind'),
-      containerCount: document.getElementById('containerCount'),
-      verdictCard: document.getElementById('verdictCard'),
-      verdictTitle: document.getElementById('verdictTitle'),
-      verdictSubtitle: document.getElementById('verdictSubtitle'),
-      verdictIconContainer: document.getElementById('verdictIconContainer'),
-      matchedSccPill: document.getElementById('matchedSccPill'),
-      violationsContainer: document.getElementById('violationsContainer'),
-      mutationsContainer: document.getElementById('mutationsContainer'),
-      violationCountBadge: document.getElementById('violationCountBadge'),
-      mutationCountBadge: document.getElementById('mutationCountBadge'),
-      clusterDrawer: document.getElementById('clusterDrawer'),
-      toggleClusterDrawerBtn: document.getElementById('toggleClusterDrawerBtn'),
-      closeDrawerBtn: document.getElementById('closeDrawerBtn'),
-      activeSccCountBadge: document.getElementById('activeSccCountBadge'),
-      ctxNamespace: document.getElementById('ctxNamespace'),
-      ctxServiceAccount: document.getElementById('ctxServiceAccount'),
-      ctxUidRange: document.getElementById('ctxUidRange'),
-      ctxMcsCategory: document.getElementById('ctxMcsCategory'),
-      uidRangeHint: document.getElementById('uidRangeHint'),
-      cliGrantCmd: document.getElementById('cliGrantCmd'),
-      yamlRoleBindingSnippet: document.getElementById('yamlRoleBindingSnippet'),
-      validateBtn: document.getElementById('validateBtn'),
-      autoFixBtn: document.getElementById('autoFixBtn'),
-      copyYamlBtn: document.getElementById('copyYamlBtn')
+    const TRIVIAL_VOLUMES = new Set(['configMap', 'downwardAPI', 'emptyDir', 'projected', 'secret', 'none']);
+    const VOLUME_KEYS = [
+      'hostPath', 'emptyDir', 'secret', 'configMap', 'persistentVolumeClaim', 'projected',
+      'downwardAPI', 'nfs', 'csi', 'ephemeral', 'iscsi', 'fc', 'cephfs', 'glusterfs',
+      'rbd', 'flexVolume', 'azureFile', 'azureDisk', 'awsElasticBlockStore', 'gcePersistentDisk',
+      'vsphereVolume', 'quobyte', 'photonPersistentDisk', 'portworxVolume', 'scaleIO',
+      'storageos', 'cinder', 'flocker', 'gitRepo', 'image', 'imageVolume'
+    ];
+
+    const RESTRICTED_VOLUMES = ['configMap', 'csi', 'downwardAPI', 'emptyDir', 'ephemeral', 'persistentVolumeClaim', 'projected', 'secret'];
+    const ANYUID_VOLUMES = ['configMap', 'downwardAPI', 'emptyDir', 'persistentVolumeClaim', 'projected', 'secret'];
+
+    const POINTS = {
+      privileged: 1600000,
+      hostPorts: 800000,
+      hostNetwork: 400000,
+      hostVolume: 200000,
+      nonTrivialVolume: 100000,
+      runAsAny: 40000,
+      runAsNonRoot: 30000,
+      runAsRange: 20000,
+      runAsUser: 10000,
+      capDefault: 5000,
+      capAddOne: 300,
+      capAllowAll: 4000,
+      capAllowOne: 10,
+      capDropAll: -3000,
+      capDropOne: -50,
+      capMax: 9999,
+      capMin: 0
     };
 
     const SCC_DEFINITIONS = {
@@ -512,12 +509,15 @@ spec:
         allowHostPID: false,
         allowHostIPC: false,
         allowHostPorts: false,
-        allowHostDirVolume: false,
+        allowedVolumes: RESTRICTED_VOLUMES,
         allowedCapabilities: ['NET_BIND_SERVICE'],
+        defaultAddCapabilities: ['NET_BIND_SERVICE'],
         requiredDropCapabilities: ['ALL'],
         allowPrivilegeEscalation: false,
         runAsUser: 'MustRunAsRange',
         seLinuxContext: 'MustRunAs',
+        fsGroup: 'MustRunAs',
+        supplementalGroups: 'MustRunAs',
         seccompProfiles: ['runtime/default']
       },
       'nonroot-v2': {
@@ -527,12 +527,15 @@ spec:
         allowHostPID: false,
         allowHostIPC: false,
         allowHostPorts: false,
-        allowHostDirVolume: false,
+        allowedVolumes: RESTRICTED_VOLUMES,
         allowedCapabilities: ['NET_BIND_SERVICE'],
+        defaultAddCapabilities: ['NET_BIND_SERVICE'],
         requiredDropCapabilities: ['ALL'],
         allowPrivilegeEscalation: false,
         runAsUser: 'MustRunAsNonRoot',
         seLinuxContext: 'MustRunAs',
+        fsGroup: 'RunAsAny',
+        supplementalGroups: 'RunAsAny',
         seccompProfiles: ['runtime/default']
       },
       'hostnetwork-v2': {
@@ -542,12 +545,15 @@ spec:
         allowHostPID: false,
         allowHostIPC: false,
         allowHostPorts: true,
-        allowHostDirVolume: false,
+        allowedVolumes: RESTRICTED_VOLUMES,
         allowedCapabilities: ['NET_BIND_SERVICE'],
+        defaultAddCapabilities: ['NET_BIND_SERVICE'],
         requiredDropCapabilities: ['ALL'],
         allowPrivilegeEscalation: false,
         runAsUser: 'MustRunAsRange',
         seLinuxContext: 'MustRunAs',
+        fsGroup: 'MustRunAs',
+        supplementalGroups: 'MustRunAs',
         seccompProfiles: ['runtime/default']
       },
       'anyuid': {
@@ -557,30 +563,73 @@ spec:
         allowHostPID: false,
         allowHostIPC: false,
         allowHostPorts: false,
-        allowHostDirVolume: false,
+        allowedVolumes: ANYUID_VOLUMES,
         allowedCapabilities: [],
+        defaultAddCapabilities: [],
         requiredDropCapabilities: ['MKNOD'],
         allowPrivilegeEscalation: true,
         runAsUser: 'RunAsAny',
         seLinuxContext: 'MustRunAs',
+        fsGroup: 'RunAsAny',
+        supplementalGroups: 'RunAsAny',
         seccompProfiles: ['*']
       },
       'privileged': {
-        priority: 20,
+        priority: 0,
         allowPrivileged: true,
         allowHostNetwork: true,
         allowHostPID: true,
         allowHostIPC: true,
         allowHostPorts: true,
-        allowHostDirVolume: true,
+        allowedVolumes: ['*'],
         allowedCapabilities: ['*'],
+        defaultAddCapabilities: [],
         requiredDropCapabilities: [],
         allowPrivilegeEscalation: true,
         runAsUser: 'RunAsAny',
         seLinuxContext: 'RunAsAny',
+        fsGroup: 'RunAsAny',
+        supplementalGroups: 'RunAsAny',
         seccompProfiles: ['*']
       }
     };
+
+    const state = {
+      parsedYaml: null,
+      rawYaml: '',
+      violations: [],
+      mutations: [],
+      matchedScc: null,
+      admitted: false,
+      suggestedScc: 'anyuid',
+      clusterSccs: {
+        'restricted-v2': true,
+        'nonroot-v2': false,
+        'hostnetwork-v2': false,
+        'anyuid': false,
+        'privileged': false
+      }
+    };
+
+    const el = {};
+
+    function yamlLib() {
+      const lib = window.jsyaml;
+      if (!lib || typeof lib.load !== 'function') {
+        throw new Error('js-yaml failed to load (expected window.jsyaml).');
+      }
+      return lib;
+    }
+
+    function esc(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[ch]));
+    }
 
     function parseUidRange(rangeStr) {
       if (!rangeStr || !rangeStr.includes('/')) return { min: 1000670000, max: 1000679999, size: 10000 };
@@ -594,33 +643,376 @@ spec:
       };
     }
 
-    function updateUidHint() {
-      const range = parseUidRange(el.ctxUidRange.value);
-      el.uidRangeHint.textContent = `Valid UIDs: ${range.min} - ${range.max}`;
+    function volumeType(vol) {
+      if (!vol || typeof vol !== 'object') return 'unknown';
+      for (const key of VOLUME_KEYS) {
+        if (vol[key] != null) return key;
+      }
+      return 'unknown';
     }
 
-    function updateGutter() {
-      const lines = el.yamlEditor.value.split('\n').length;
-      let gutterText = '';
-      for (let i = 1; i <= Math.max(lines, 1); i++) {
-        gutterText += i + '\n';
+    function volumeAllowed(scc, type) {
+      if (scc.allowedVolumes.includes('*')) return true;
+      return scc.allowedVolumes.includes(type);
+    }
+
+    function capabilitiesPointValue(scc) {
+      let capsPoints = POINTS.capDefault;
+      capsPoints += POINTS.capAddOne * (scc.defaultAddCapabilities || []).length;
+      const allowed = (scc.allowedCapabilities || []).map((c) => String(c).toUpperCase());
+      if (allowed.includes('*') || allowed.includes('ALL')) {
+        capsPoints += POINTS.capAllowAll;
+      } else {
+        capsPoints += POINTS.capAllowOne * allowed.length;
       }
-      el.gutter.textContent = gutterText;
+      const dropped = (scc.requiredDropCapabilities || []).map((c) => String(c).toUpperCase());
+      if (dropped.includes('ALL')) {
+        capsPoints += POINTS.capDropAll;
+      } else {
+        capsPoints += POINTS.capDropOne * dropped.length;
+      }
+      if (capsPoints > POINTS.capMax) return POINTS.capMax;
+      if (capsPoints < POINTS.capMin) return POINTS.capMin;
+      return capsPoints;
+    }
+
+    function volumePointValue(scc) {
+      if (scc.allowedVolumes.includes('*') || scc.allowedVolumes.includes('hostPath')) {
+        return POINTS.hostVolume;
+      }
+      const hasNonTrivial = scc.allowedVolumes.some((v) => !TRIVIAL_VOLUMES.has(v));
+      return hasNonTrivial ? POINTS.nonTrivialVolume : 0;
+    }
+
+    function strategyPoints(type) {
+      switch (type) {
+        case 'RunAsAny': return POINTS.runAsAny;
+        case 'MustRunAsNonRoot': return POINTS.runAsNonRoot;
+        case 'MustRunAsRange': return POINTS.runAsRange;
+        case 'MustRunAs': return POINTS.runAsUser;
+        default: return 0;
+      }
+    }
+
+    function restrictionScore(scc) {
+      let total = 0;
+      if (scc.allowPrivileged) total += POINTS.privileged;
+      total += volumePointValue(scc);
+      if (scc.allowHostNetwork) total += POINTS.hostNetwork;
+      if (scc.allowHostPorts) total += POINTS.hostPorts;
+      total += capabilitiesPointValue(scc);
+      total += strategyPoints(scc.seLinuxContext);
+      total += strategyPoints(scc.runAsUser);
+      return total;
+    }
+
+    function sortSccs(names) {
+      return [...names].sort((a, b) => {
+        const sa = SCC_DEFINITIONS[a];
+        const sb = SCC_DEFINITIONS[b];
+        const pa = sa.priority ?? 0;
+        const pb = sb.priority ?? 0;
+        if (pa !== pb) return pb - pa;
+        const ra = restrictionScore(sa);
+        const rb = restrictionScore(sb);
+        if (ra !== rb) return ra - rb;
+        return a.localeCompare(b);
+      });
+    }
+
+    function capAllowed(scc, cap) {
+      const allowed = (scc.allowedCapabilities || []).map((c) => String(c).toUpperCase());
+      if (allowed.includes('*') || allowed.includes('ALL')) return true;
+      return allowed.includes(String(cap).toUpperCase());
+    }
+
+    function dropsAll(dropped) {
+      return dropped.some((c) => String(c).toUpperCase() === 'ALL');
+    }
+
+    function normalizeSeccomp(profile) {
+      if (!profile) return null;
+      if (typeof profile === 'string') return profile;
+      const type = profile.type;
+      if (type === 'RuntimeDefault' || type === 'runtime/default') return 'runtime/default';
+      if (type === 'Unconfined' || type === 'unconfined') return 'unconfined';
+      if (type === 'Localhost') return 'localhost';
+      return String(type || '');
+    }
+
+    function seccompAllowed(scc, profile) {
+      if ((scc.seccompProfiles || []).includes('*')) return true;
+      if (!profile) return true;
+      return (scc.seccompProfiles || []).includes(profile);
+    }
+
+    function collectContainers(podSpec) {
+      return [
+        ...(podSpec.containers || []).map((c, i) => ({ c, path: `spec.containers[${c.name || i}]` })),
+        ...(podSpec.initContainers || []).map((c, i) => ({ c, path: `spec.initContainers[${c.name || i}]` })),
+        ...(podSpec.ephemeralContainers || []).map((c, i) => ({ c, path: `spec.ephemeralContainers[${c.name || i}]` }))
+      ];
+    }
+
+    function testPodAgainstScc(podSpec, scc, sccName, uidRange, mcsLevel) {
+      const violations = [];
+      const mutations = [];
+      const addV = (field, val, reason, fix, requiredScc) => {
+        violations.push({ sccName, field, val, reason, fix, requiredScc });
+      };
+
+      if (podSpec.hostNetwork && !scc.allowHostNetwork) {
+        addV('spec.hostNetwork', 'true', `SCC '${sccName}' forbids hostNetwork access.`,
+          'Remove hostNetwork: true or grant hostnetwork-v2 / privileged.', 'hostnetwork-v2');
+      }
+      if (podSpec.hostPID && !scc.allowHostPID) {
+        addV('spec.hostPID', 'true', `SCC '${sccName}' forbids sharing the host PID namespace.`,
+          'Remove hostPID: true or bind the privileged SCC.', 'privileged');
+      }
+      if (podSpec.hostIPC && !scc.allowHostIPC) {
+        addV('spec.hostIPC', 'true', `SCC '${sccName}' forbids host IPC sharing.`,
+          'Remove hostIPC: true or bind privileged SCC.', 'privileged');
+      }
+
+      for (const vol of (podSpec.volumes || [])) {
+        const type = volumeType(vol);
+        if (!volumeAllowed(scc, type)) {
+          const isHost = type === 'hostPath';
+          addV(`spec.volumes[name=${vol.name || type}].${type}`,
+            type === 'hostPath' ? (vol.hostPath?.path || 'path') : type,
+            isHost
+              ? `HostPath volume mounts are forbidden by '${sccName}'.`
+              : `Volume type '${type}' is not in the allowed set for '${sccName}' (${scc.allowedVolumes.join(', ')}).`,
+            isHost
+              ? 'Switch to a PVC or emptyDir, or request privileged / hostmount-anyuid.'
+              : `Use an allowed volume type or grant an SCC that permits '${type}'.`,
+            isHost ? 'privileged' : 'privileged');
+        }
+      }
+
+      const podSec = podSpec.securityContext || {};
+      const fsGroup = podSec.fsGroup;
+      if (fsGroup !== undefined && scc.fsGroup === 'MustRunAs') {
+        if (fsGroup < uidRange.min || fsGroup > uidRange.max) {
+          addV('spec.securityContext.fsGroup', String(fsGroup),
+            `fsGroup ${fsGroup} is outside namespace range [${uidRange.min} - ${uidRange.max}].`,
+            `Omit fsGroup (OpenShift injects ${uidRange.min}) or pick a GID in range.`, 'anyuid');
+        }
+      } else if (fsGroup === undefined && scc.fsGroup === 'MustRunAs') {
+        mutations.push({
+          field: 'spec.securityContext.fsGroup',
+          injectedValue: String(uidRange.min),
+          source: 'Namespace UID/GID range (MustRunAs)'
+        });
+      }
+
+      const seLinuxLevel = podSec.seLinuxOptions?.level;
+      if (seLinuxLevel && scc.seLinuxContext === 'MustRunAs' && seLinuxLevel !== mcsLevel) {
+        addV('spec.securityContext.seLinuxOptions.level', seLinuxLevel,
+          `SELinux MCS '${seLinuxLevel}' does not match namespace annotation '${mcsLevel}'.`,
+          'Omit seLinuxOptions.level and let OpenShift inject the project MCS.', 'privileged');
+      } else if (!seLinuxLevel && scc.seLinuxContext === 'MustRunAs') {
+        mutations.push({
+          field: 'spec.securityContext.seLinuxOptions.level',
+          injectedValue: `"${mcsLevel}"`,
+          source: 'Namespace MCS annotation (openshift.io/sa.scc.mcs)'
+        });
+      }
+
+      const podSeccomp = normalizeSeccomp(podSec.seccompProfile);
+      if (podSeccomp && !seccompAllowed(scc, podSeccomp)) {
+        addV('spec.securityContext.seccompProfile', podSeccomp,
+          `seccomp profile '${podSeccomp}' is not allowed by '${sccName}' (allowed: ${scc.seccompProfiles.join(', ')}).`,
+          'Use RuntimeDefault or omit the field.', 'privileged');
+      } else if (!podSeccomp && (scc.seccompProfiles || []).includes('runtime/default')) {
+        mutations.push({
+          field: 'spec.securityContext.seccompProfile.type',
+          injectedValue: '"RuntimeDefault"',
+          source: `${sccName} standard`
+        });
+      }
+
+      const containerEntries = collectContainers(podSpec);
+      for (const { c, path } of containerEntries) {
+        const cName = c.name || 'unnamed';
+        const sec = c.securityContext || {};
+
+        if (sec.privileged && !scc.allowPrivileged) {
+          addV(`${path}.securityContext.privileged`, 'true',
+            `Privileged containers are denied by '${sccName}'.`,
+            'Set privileged: false or request the privileged SCC.', 'privileged');
+        }
+
+        if (sec.allowPrivilegeEscalation === true && scc.allowPrivilegeEscalation === false) {
+          addV(`${path}.securityContext.allowPrivilegeEscalation`, 'true',
+            `'${sccName}' enforces allowPrivilegeEscalation: false.`,
+            'Set allowPrivilegeEscalation: false or omit the field.', 'anyuid');
+        }
+
+        if (sec.allowPrivilegeEscalation === undefined && scc.allowPrivilegeEscalation === false) {
+          mutations.push({
+            field: `${path}.securityContext.allowPrivilegeEscalation`,
+            injectedValue: 'false',
+            source: `${sccName} enforcement`
+          });
+        }
+
+        const runAsUser = sec.runAsUser !== undefined ? sec.runAsUser : podSec.runAsUser;
+        const runAsNonRoot = sec.runAsNonRoot !== undefined ? sec.runAsNonRoot : podSec.runAsNonRoot;
+
+        if (runAsUser !== undefined) {
+          if (runAsUser === 0 && scc.runAsUser !== 'RunAsAny') {
+            addV(`${path}.securityContext.runAsUser`, '0 (root)',
+              `Container requests UID 0. SCC '${sccName}' requires an unprivileged UID strategy.`,
+              'Remove runAsUser: 0 or grant the anyuid SCC.', 'anyuid');
+          } else if (scc.runAsUser === 'MustRunAsRange' && (runAsUser < uidRange.min || runAsUser > uidRange.max)) {
+            addV(`${path}.securityContext.runAsUser`, String(runAsUser),
+              `UID ${runAsUser} is outside namespace range [${uidRange.min} - ${uidRange.max}].`,
+              `Remove runAsUser (OpenShift assigns ${uidRange.min}) or use a UID in range.`, 'anyuid');
+          } else if (scc.runAsUser === 'MustRunAsNonRoot' && runAsUser === 0) {
+            addV(`${path}.securityContext.runAsUser`, '0',
+              'nonroot-v2 requires a non-zero UID.',
+              'Specify a non-root UID or grant anyuid.', 'anyuid');
+          }
+        } else if (scc.runAsUser === 'MustRunAsRange') {
+          mutations.push({
+            field: `${path}.securityContext.runAsUser`,
+            injectedValue: String(uidRange.min),
+            source: `Namespace UID range (${uidRange.min}/${uidRange.size})`
+          });
+        } else if (scc.runAsUser === 'MustRunAsNonRoot') {
+          if (runAsNonRoot === false) {
+            addV(`${path}.securityContext.runAsNonRoot`, 'false',
+              `'${sccName}' requires runAsNonRoot: true when UID is omitted.`,
+              'Set runAsNonRoot: true or set a non-zero runAsUser.', 'anyuid');
+          } else if (runAsNonRoot === undefined) {
+            mutations.push({
+              field: `${path}.securityContext.runAsNonRoot`,
+              injectedValue: 'true',
+              source: `${sccName} MustRunAsNonRoot`
+            });
+          }
+        }
+
+        const caps = sec.capabilities || {};
+        const addedCaps = caps.add || [];
+        const droppedCaps = caps.drop || [];
+
+        for (const cap of addedCaps) {
+          if (!capAllowed(scc, cap)) {
+            addV(`${path}.securityContext.capabilities.add`, `[${cap}]`,
+              `Capability '${cap}' is forbidden by '${sccName}'. Allowed: ${scc.allowedCapabilities.join(', ') || 'none'}.`,
+              `Remove '${cap}', or grant an SCC that allows it (often privileged).`, 'privileged');
+          }
+        }
+
+        const requiredDrops = (scc.requiredDropCapabilities || []).map((c) => String(c).toUpperCase());
+        for (const drop of requiredDrops) {
+          if (drop === 'ALL') {
+            if (!dropsAll(droppedCaps)) {
+              mutations.push({
+                field: `${path}.securityContext.capabilities.drop`,
+                injectedValue: '["ALL"]',
+                source: `${sccName} requiredDropCapabilities`
+              });
+            }
+          } else if (!droppedCaps.map((c) => String(c).toUpperCase()).includes(drop) && !dropsAll(droppedCaps)) {
+            mutations.push({
+              field: `${path}.securityContext.capabilities.drop`,
+              injectedValue: `["${drop}"]`,
+              source: `${sccName} requiredDropCapabilities`
+            });
+          }
+        }
+
+        for (const cap of (scc.defaultAddCapabilities || [])) {
+          if (!addedCaps.map((c) => String(c).toUpperCase()).includes(String(cap).toUpperCase())) {
+            mutations.push({
+              field: `${path}.securityContext.capabilities.add`,
+              injectedValue: `["${cap}"]`,
+              source: `${sccName} defaultAddCapabilities`
+            });
+          }
+        }
+
+        for (const port of (c.ports || [])) {
+          if (port.hostPort && !scc.allowHostPorts) {
+            addV(`${path}.ports[containerPort=${port.containerPort}].hostPort`, String(port.hostPort),
+              `'${sccName}' forbids hostPort. Grant hostnetwork-v2 or privileged, or remove hostPort.`,
+              'Remove hostPort or bind hostnetwork-v2.', 'hostnetwork-v2');
+          }
+        }
+      }
+
+      mutations.push({
+        field: 'metadata.annotations["openshift.io/scc"]',
+        injectedValue: `"${sccName}"`,
+        source: 'OpenShift admission tracker'
+      });
+
+      return { sccName, passed: violations.length === 0, violations, mutations };
     }
 
     function extractPodSpec(doc) {
       if (!doc || typeof doc !== 'object') return null;
       if (doc.kind === 'Pod') return { spec: doc.spec || {}, root: doc };
-      if (['Deployment', 'StatefulSet', 'DaemonSet', 'Job'].includes(doc.kind)) {
+      if (WORKLOAD_KINDS.includes(doc.kind)) {
         return { spec: doc.spec?.template?.spec || {}, root: doc };
       }
       if (doc.kind === 'CronJob') {
         return { spec: doc.spec?.jobTemplate?.spec?.template?.spec || {}, root: doc };
       }
-      // Fallback: check if doc has containers directly
       if (doc.spec?.containers) return { spec: doc.spec, root: doc };
       if (doc.containers) return { spec: doc, root: doc };
       return null;
+    }
+
+    function leastPrivilegePassingScc(podSpec, uidRange, mcsLevel, excludeGranted) {
+      const names = sortSccs(Object.keys(SCC_DEFINITIONS));
+      const mostRestrictiveFirst = [...names].sort((a, b) => {
+        const sa = SCC_DEFINITIONS[a];
+        const sb = SCC_DEFINITIONS[b];
+        const ra = restrictionScore(sa);
+        const rb = restrictionScore(sb);
+        if (ra !== rb) return ra - rb;
+        return a.localeCompare(b);
+      });
+      for (const name of mostRestrictiveFirst) {
+        if (excludeGranted && state.clusterSccs[name]) continue;
+        const report = testPodAgainstScc(podSpec, SCC_DEFINITIONS[name], name, uidRange, mcsLevel);
+        if (report.passed) return name;
+      }
+      return null;
+    }
+
+    function updateUidHint() {
+      const range = parseUidRange(el.ctxUidRange.value);
+      el.uidRangeHint.textContent = `Valid UIDs: ${range.min} - ${range.max}`;
+    }
+
+    function updateSccBadge() {
+      const n = Object.values(state.clusterSccs).filter(Boolean).length;
+      el.activeSccCountBadge.textContent = `${n} SCC${n === 1 ? '' : 's'}`;
+    }
+
+    function updateGutter() {
+      const lines = el.yamlEditor.value.split('\n').length;
+      let gutterText = '';
+      for (let i = 1; i <= Math.max(lines, 1); i++) gutterText += i + '\n';
+      el.gutter.textContent = gutterText;
+    }
+
+    function copyText(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(text);
+      }
+      const temp = document.createElement('textarea');
+      temp.value = text;
+      document.body.appendChild(temp);
+      temp.select();
+      document.execCommand('copy');
+      document.body.removeChild(temp);
+      return Promise.resolve();
     }
 
     function evaluateSccAdmission() {
@@ -628,13 +1020,18 @@ spec:
       state.mutations = [];
       state.matchedScc = null;
       state.admitted = false;
+      state.rawYaml = el.yamlEditor.value;
 
-      const rawYaml = el.yamlEditor.value;
-      state.rawYaml = rawYaml;
+      if (el.evalOrderRow) el.evalOrderRow.textContent = '';
 
       let doc;
       try {
-        doc = js-yaml.load(rawYaml);
+        const raw = el.yamlEditor.value.trim();
+        if (!raw) {
+          showEmptyState();
+          return;
+        }
+        doc = yamlLib().load(raw);
       } catch (err) {
         showParseError(err.message);
         return;
@@ -652,32 +1049,26 @@ spec:
       }
 
       el.detectedKind.textContent = `Kind: ${doc.kind || 'Pod'}`;
-      const podSpec = extracted.spec;
-      const containers = [
-        ...(podSpec.containers || []),
-        ...(podSpec.initContainers || [])
-      ];
+      const podSpec = extracted.spec || {};
+      const containers = collectContainers(podSpec);
       el.containerCount.textContent = `Containers: ${containers.length}`;
 
       const nsUidRange = parseUidRange(el.ctxUidRange.value);
       const mcsLevel = el.ctxMcsCategory.value.trim() || 's0:c26,c10';
+      const availableSccs = Object.keys(state.clusterSccs).filter((scc) => state.clusterSccs[scc]);
 
-      // Find which active SCCs are granted to this ServiceAccount
-      const availableSccs = Object.keys(state.clusterSccs).filter(scc => state.clusterSccs[scc]);
+      if (!availableSccs.length) {
+        showNoSccsGranted();
+        return;
+      }
 
-      // OpenShift order of testing: Most restrictive first for priority 0, then higher priority
-      // Canonical order: restricted-v2 -> nonroot-v2 -> hostnetwork-v2 -> anyuid -> privileged
-      const evaluationOrder = ['restricted-v2', 'nonroot-v2', 'hostnetwork-v2', 'anyuid', 'privileged']
-        .filter(name => availableSccs.includes(name));
-
+      const evaluationOrder = sortSccs(availableSccs);
+      const evaluatedReports = [];
       let winningScc = null;
-      let evaluatedReports = [];
 
       for (const sccName of evaluationOrder) {
-        const sccDef = SCC_DEFINITIONS[sccName];
-        const report = testPodAgainstScc(podSpec, containers, sccDef, sccName, nsUidRange, mcsLevel);
+        const report = testPodAgainstScc(podSpec, SCC_DEFINITIONS[sccName], sccName, nsUidRange, mcsLevel);
         evaluatedReports.push(report);
-
         if (report.passed) {
           winningScc = sccName;
           state.mutations = report.mutations;
@@ -685,288 +1076,100 @@ spec:
         }
       }
 
+      const minGrant = leastPrivilegePassingScc(podSpec, nsUidRange, mcsLevel, true);
+      state.suggestedScc = minGrant || leastPrivilegePassingScc(podSpec, nsUidRange, mcsLevel, false) || 'privileged';
+
+      const orderText = `Tried in OpenShift order (priority ↓, then most restrictive): ${evaluationOrder.join(' → ')}`;
+
       if (winningScc) {
         state.matchedScc = winningScc;
         state.admitted = true;
-        state.violations = []; // No blocking errors for the winning match
-        renderAdmissionSuccess(winningScc, state.mutations);
+        state.violations = [];
+        renderAdmissionSuccess(winningScc, state.mutations, orderText, evaluationOrder);
       } else {
         state.admitted = false;
         state.matchedScc = null;
-        // Collect violations from the primary desired baseline (restricted-v2) or most common
-        const primaryReport = evaluatedReports.find(r => r.sccName === 'restricted-v2') || evaluatedReports[0] || { violations: [] };
-        state.violations = primaryReport.violations;
-        renderAdmissionFailure(evaluatedReports);
+        state.violations = evaluatedReports.flatMap((r) => r.violations);
+        renderAdmissionFailure(evaluatedReports, orderText);
       }
 
       updateRbacSnippets();
     }
 
-    function testPodAgainstScc(podSpec, containers, scc, sccName, uidRange, mcsLevel) {
-      const violations = [];
-      const mutations = [];
-
-      // 1. Host Network
-      if (podSpec.hostNetwork && !scc.allowHostNetwork) {
-        violations.push({
-          field: 'spec.hostNetwork',
-          val: 'true',
-          reason: `SCC '${sccName}' forbids hostNetwork access.`,
-          fix: 'Remove hostNetwork: true or grant the hostnetwork-v2 or privileged SCC.',
-          requiredScc: 'hostnetwork-v2'
-        });
-      }
-
-      // 2. Host PID
-      if (podSpec.hostPID && !scc.allowHostPID) {
-        violations.push({
-          field: 'spec.hostPID',
-          val: 'true',
-          reason: `SCC '${sccName}' strictly forbids sharing the host PID namespace.`,
-          fix: 'Remove hostPID: true or bind the privileged SCC to your ServiceAccount.',
-          requiredScc: 'privileged'
-        });
-      }
-
-      // 3. Host IPC
-      if (podSpec.hostIPC && !scc.allowHostIPC) {
-        violations.push({
-          field: 'spec.hostIPC',
-          val: 'true',
-          reason: `SCC '${sccName}' forbids host IPC sharing.`,
-          fix: 'Remove hostIPC: true or bind privileged SCC.',
-          requiredScc: 'privileged'
-        });
-      }
-
-      // 4. Volumes (hostPath check)
-      const volumes = podSpec.volumes || [];
-      for (const vol of volumes) {
-        if (vol.hostPath && !scc.allowHostDirVolume) {
-          violations.push({
-            field: `spec.volumes[name=${vol.name}].hostPath`,
-            val: vol.hostPath.path || 'path',
-            reason: `HostPath volume mounts are forbidden by '${sccName}' because they allow arbitrary host filesystem access.`,
-            fix: 'Switch to a PersistentVolumeClaim (PVC) or emptyDir, or request privileged / hostmount-anyuid SCC.',
-            requiredScc: 'privileged'
-          });
-        }
-      }
-
-      // 5. Container-level Security Context checks
-      containers.forEach((c, idx) => {
-        const cName = c.name || `container-${idx}`;
-        const sec = c.securityContext || {};
-        const podSec = podSpec.securityContext || {};
-
-        // Privileged container
-        if (sec.privileged && !scc.allowPrivileged) {
-          violations.push({
-            field: `spec.containers[${cName}].securityContext.privileged`,
-            val: 'true',
-            reason: `Privileged containers disable all Linux security boundaries. SCC '${sccName}' denies privileged execution.`,
-            fix: 'Set privileged: false or request cluster-admin to grant privileged SCC.',
-            requiredScc: 'privileged'
-          });
-        }
-
-        // AllowPrivilegeEscalation
-        if (sec.allowPrivilegeEscalation === true && scc.allowPrivilegeEscalation === false) {
-          violations.push({
-            field: `spec.containers[${cName}].securityContext.allowPrivilegeEscalation`,
-            val: 'true',
-            reason: `'${sccName}' enforces allowPrivilegeEscalation: false to prevent suid binary exploits.`,
-            fix: 'Set allowPrivilegeEscalation: false or omit the field.',
-            requiredScc: 'anyuid'
-          });
-        }
-
-        // UID checks
-        const runAsUser = sec.runAsUser !== undefined ? sec.runAsUser : podSec.runAsUser;
-        if (runAsUser !== undefined) {
-          if (runAsUser === 0 && scc.runAsUser !== 'RunAsAny') {
-            violations.push({
-              field: `spec.containers[${cName}].securityContext.runAsUser`,
-              val: '0 (root)',
-              reason: `Container explicitly requests UID 0 (root). SCC '${sccName}' strictly requires running as an unprivileged UID.`,
-              fix: 'Remove runAsUser: 0 to let OpenShift inject an allocated range UID, or grant the anyuid SCC.',
-              requiredScc: 'anyuid'
-            });
-          } else if (scc.runAsUser === 'MustRunAsRange') {
-            if (runAsUser < uidRange.min || runAsUser > uidRange.max) {
-              violations.push({
-                field: `spec.containers[${cName}].securityContext.runAsUser`,
-                val: `${runAsUser}`,
-                reason: `Requested UID ${runAsUser} is outside target namespace allocated range [${uidRange.min} - ${uidRange.max}].`,
-                fix: `Remove runAsUser (OpenShift will auto-assign ${uidRange.min}) or use a UID within range.`,
-                requiredScc: 'anyuid'
-              });
-            }
-          } else if (scc.runAsUser === 'MustRunAsNonRoot') {
-            if (runAsUser === 0) {
-              violations.push({
-                field: `spec.containers[${cName}].securityContext.runAsUser`,
-                val: '0',
-                reason: `nonroot-v2 requires non-zero UID.`,
-                fix: 'Specify a non-root UID (e.g. 1001) or remove.',
-                requiredScc: 'anyuid'
-              });
-            }
-          }
-        } else {
-          // If omitted and SCC is MustRunAsRange, it will be mutated!
-          if (scc.runAsUser === 'MustRunAsRange') {
-            mutations.push({
-              field: `spec.containers[${cName}].securityContext.runAsUser`,
-              injectedValue: `${uidRange.min}`,
-              source: `Namespace UID range block (${uidRange.min}/${uidRange.size})`
-            });
-          }
-        }
-
-        // Capabilities
-        const caps = sec.capabilities || {};
-        const addedCaps = caps.add || [];
-        const droppedCaps = caps.drop || [];
-
-        if (scc.allowedCapabilities[0] !== '*') {
-          for (const cap of addedCaps) {
-            if (!scc.allowedCapabilities.includes(cap)) {
-              violations.push({
-                field: `spec.containers[${cName}].securityContext.capabilities.add`,
-                val: `[${cap}]`,
-                reason: `Capability '${cap}' is forbidden by SCC '${sccName}'. Only allowed: ${scc.allowedCapabilities.join(', ') || 'none'}.`,
-                fix: `Remove capability '${cap}', or configure a custom SCC / privileged access.`,
-                requiredScc: 'privileged'
-              });
-            }
-          }
-        }
-
-        // Mutated capabilities
-        if (sccName === 'restricted-v2') {
-          if (!droppedCaps.includes('ALL')) {
-            mutations.push({
-              field: `spec.containers[${cName}].securityContext.capabilities.drop`,
-              injectedValue: `["ALL"]`,
-              source: `restricted-v2 baseline requirement`
-            });
-          }
-          if (!addedCaps.includes('NET_BIND_SERVICE')) {
-            mutations.push({
-              field: `spec.containers[${cName}].securityContext.capabilities.add`,
-              injectedValue: `["NET_BIND_SERVICE"]`,
-              source: `restricted-v2 convenience default`
-            });
-          }
-        }
-
-        // Escalation mutation
-        if (sec.allowPrivilegeEscalation === undefined && scc.allowPrivilegeEscalation === false) {
-          mutations.push({
-            field: `spec.containers[${cName}].securityContext.allowPrivilegeEscalation`,
-            injectedValue: `false`,
-            source: `${sccName} enforcement`
-          });
-        }
-      });
-
-      // SELinux mutation
-      if (!podSpec.securityContext?.seLinuxOptions?.level && scc.seLinuxContext === 'MustRunAs') {
-        mutations.push({
-          field: `spec.securityContext.seLinuxOptions.level`,
-          injectedValue: `"${mcsLevel}"`,
-          source: `Namespace MCS annotation (openshift.io/sa.scc.mcs)`
-        });
-      }
-
-      // Seccomp mutation
-      if (!podSpec.securityContext?.seccompProfile && scc.seccompProfiles.includes('runtime/default')) {
-        mutations.push({
-          field: `spec.securityContext.seccompProfile.type`,
-          injectedValue: `"RuntimeDefault"`,
-          source: `${sccName} standard`
-        });
-      }
-
-      // Audit annotation mutation
-      mutations.push({
-        field: `metadata.annotations["openshift.io/scc"]`,
-        injectedValue: `"${sccName}"`,
-        source: `OpenShift admission tracker`
-      });
-
-      return {
-        sccName,
-        passed: violations.length === 0,
-        violations,
-        mutations
-      };
-    }
-
-    function renderAdmissionSuccess(sccName, mutations) {
+    function renderAdmissionSuccess(sccName, mutations, orderText, evaluationOrder) {
       el.verdictCard.className = 'bg-[#152317] border border-emerald-600/60 rounded-lg p-5 shadow-xl badge-glow-green transition-all duration-300';
       el.verdictTitle.innerHTML = `<span class="text-emerald-400 flex items-center gap-2"><svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg> ADMISSION ALLOWED</span>`;
-      el.verdictSubtitle.textContent = `Pod satisfies '${sccName}' constraints and will be scheduled to worker nodes.`;
-      
+      const skipped = evaluationOrder.slice(0, evaluationOrder.indexOf(sccName));
+      const extra = skipped.length
+        ? ` Earlier candidates failed: ${skipped.join(', ')}.`
+        : (sccName === 'anyuid' && state.clusterSccs['restricted-v2']
+          ? ' Note: anyuid has Priority 10 so it wins over restricted-v2 even for pods that would also pass restricted-v2.'
+          : '');
+      el.verdictSubtitle.textContent = `Pod satisfies '${sccName}' and would be admitted.${extra}`;
+      el.evalOrderRow.textContent = orderText;
+
       el.verdictIconContainer.className = 'p-2.5 rounded-lg bg-emerald-950 text-emerald-300 border border-emerald-700/50';
-      el.verdictIconContainer.innerHTML = `<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>`;
+      el.verdictIconContainer.innerHTML = `<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>`;
 
       el.matchedSccPill.className = 'px-3 py-1 rounded bg-emerald-900/60 text-emerald-200 border border-emerald-600 font-mono font-bold text-xs';
       el.matchedSccPill.textContent = sccName;
-
       el.violationCountBadge.textContent = '0';
       el.mutationCountBadge.textContent = `${mutations.length}`;
 
       el.violationsContainer.innerHTML = `
         <div class="p-4 rounded-md bg-emerald-950/30 border border-emerald-800/40 text-emerald-300 text-xs">
           <div class="font-bold flex items-center space-x-1.5 mb-1">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
             <span>No SCC Admission Blockers</span>
           </div>
-          This workload definition conforms to the policies of <strong class="text-white">${sccName}</strong>. 
-          Check the <strong>Mutations by SCC</strong> tab to view values OpenShift automatically populates prior to storage in etcd.
+          This workload conforms to <strong class="text-white">${esc(sccName)}</strong>.
+          OpenShift tries granted SCCs by priority, then restrictiveness — the first match is recorded on the pod as <span class="font-mono">openshift.io/scc</span>.
         </div>
       `;
-
       renderMutations(mutations);
     }
 
-    function renderAdmissionFailure(reports) {
+    function renderViolationCard(v) {
+      return `
+        <div class="p-3.5 rounded-md bg-[#1B1718] border border-red-900/50 text-xs space-y-2">
+          <div class="flex items-start justify-between gap-2">
+            <span class="font-mono text-red-400 font-semibold text-[11px] break-all">${esc(v.field)}</span>
+            <span class="px-1.5 py-0.5 rounded bg-red-950 text-red-300 border border-red-800 text-[10px] font-mono whitespace-nowrap">Value: ${esc(v.val)}</span>
+          </div>
+          <p class="text-gray-300 text-xs">${esc(v.reason)}</p>
+          <div class="bg-[#121011] p-2.5 rounded border border-rh-border flex items-start space-x-2 text-[11px]">
+            <span class="text-emerald-400 font-bold">Fix:</span>
+            <span class="text-gray-300">${esc(v.fix)}</span>
+          </div>
+        </div>`;
+    }
+
+    function renderAdmissionFailure(reports, orderText) {
       el.verdictCard.className = 'bg-[#261517] border border-red-600/70 rounded-lg p-5 shadow-xl badge-glow transition-all duration-300';
       el.verdictTitle.innerHTML = `<span class="text-red-400 flex items-center gap-2"><svg class="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path></svg> ADMISSION FORBIDDEN</span>`;
-      el.verdictSubtitle.textContent = `Unable to validate against any granted Security Context Constraint.`;
+      el.verdictSubtitle.textContent = 'Unable to validate against any granted Security Context Constraint.';
+      el.evalOrderRow.textContent = orderText || '';
 
       el.verdictIconContainer.className = 'p-2.5 rounded-lg bg-red-950 text-red-400 border border-red-800/50';
-      el.verdictIconContainer.innerHTML = `<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>`;
+      el.verdictIconContainer.innerHTML = `<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>`;
 
       el.matchedSccPill.className = 'px-3 py-1 rounded bg-red-950 text-red-300 border border-red-800 font-mono text-xs';
       el.matchedSccPill.textContent = 'None Matched';
-
       el.violationCountBadge.textContent = `${state.violations.length}`;
       el.mutationCountBadge.textContent = '0';
 
       let html = '';
-      state.violations.forEach((v, i) => {
-        html += `
-          <div class="p-3.5 rounded-md bg-[#1B1718] border border-red-900/50 text-xs space-y-2">
-            <div class="flex items-start justify-between gap-2">
-              <span class="font-mono text-red-400 font-semibold text-[11px] break-all">${v.field}</span>
-              <span class="px-1.5 py-0.5 rounded bg-red-950 text-red-300 border border-red-800 text-[10px] font-mono whitespace-nowrap">Value: ${v.val}</span>
-            </div>
-            <p class="text-gray-300 text-xs">${v.reason}</p>
-            <div class="bg-[#121011] p-2.5 rounded border border-rh-border flex items-start space-x-2 text-[11px]">
-              <span class="text-emerald-400 font-bold">Fix:</span>
-              <span class="text-gray-300">${v.fix}</span>
-            </div>
+      reports.forEach((r) => {
+        html += `<div class="mb-4">
+          <div class="text-[11px] font-heading font-bold uppercase tracking-wide text-red-300 mb-2">
+            Why ${esc(r.sccName)} failed (${r.violations.length})
           </div>
-        `;
+          ${r.violations.map(renderViolationCard).join('')}
+        </div>`;
       });
 
       el.violationsContainer.innerHTML = html;
       el.mutationsContainer.innerHTML = `<div class="text-gray-500 text-center py-4">No mutations applied (Pod was rejected at admission).</div>`;
-      
-      // Auto-switch to violations tab
       switchTab('violations');
     }
 
@@ -975,37 +1178,31 @@ spec:
         el.mutationsContainer.innerHTML = `<div class="text-gray-500 text-center py-4">No mutations necessary.</div>`;
         return;
       }
-
-      let html = '';
-      mutations.forEach(m => {
-        html += `
-          <div class="p-2.5 rounded bg-[#161618] border border-rh-border flex flex-col space-y-1">
-            <div class="flex items-center justify-between text-gray-300">
-              <span class="text-emerald-400 text-[11px] font-mono">${m.field}</span>
-              <span class="text-[10px] text-rh-muted">${m.source}</span>
-            </div>
-            <div class="text-white text-xs bg-black/60 px-2 py-1 rounded border border-gray-800">
-              ${m.injectedValue}
-            </div>
+      el.mutationsContainer.innerHTML = mutations.map((m) => `
+        <div class="p-2.5 rounded bg-[#161618] border border-rh-border flex flex-col space-y-1">
+          <div class="flex items-center justify-between text-gray-300 gap-2">
+            <span class="text-emerald-400 text-[11px] font-mono break-all">${esc(m.field)}</span>
+            <span class="text-[10px] text-rh-muted whitespace-nowrap">${esc(m.source)}</span>
           </div>
-        `;
-      });
-      el.mutationsContainer.innerHTML = html;
+          <div class="text-white text-xs bg-black/60 px-2 py-1 rounded border border-gray-800">${esc(m.injectedValue)}</div>
+        </div>`).join('');
     }
 
     function showParseError(msg) {
       el.verdictCard.className = 'bg-[#231E15] border border-amber-600/70 rounded-lg p-5 shadow-xl';
       el.verdictTitle.innerHTML = `<span class="text-amber-400">YAML SYNTAX ERROR</span>`;
       el.verdictSubtitle.textContent = msg;
+      if (el.evalOrderRow) el.evalOrderRow.textContent = '';
       el.matchedSccPill.textContent = 'Parse Error';
-      el.violationsContainer.innerHTML = `<div class="p-3 bg-amber-950/40 border border-amber-800 text-amber-200 text-xs rounded">${msg}</div>`;
+      el.violationsContainer.innerHTML = `<div class="p-3 bg-amber-950/40 border border-amber-800 text-amber-200 text-xs rounded">${esc(msg)}</div>`;
       el.violationCountBadge.textContent = '!';
     }
 
     function showInvalidObjectError(kind) {
       el.verdictCard.className = 'bg-[#1F1F24] border border-gray-600 rounded-lg p-5 shadow-xl';
       el.verdictTitle.innerHTML = `<span class="text-gray-300">NON-WORKLOAD OBJECT</span>`;
-      el.verdictSubtitle.textContent = `Kind '${kind}' does not declare a Pod template. Provide a Pod, Deployment, StatefulSet, or DaemonSet.`;
+      el.verdictSubtitle.textContent = `Kind '${kind}' does not declare a Pod template. Provide a Pod, Deployment, StatefulSet, DaemonSet, Job, CronJob, ReplicaSet, or DeploymentConfig.`;
+      if (el.evalOrderRow) el.evalOrderRow.textContent = '';
       el.matchedSccPill.textContent = 'N/A';
       el.violationsContainer.innerHTML = `<div class="text-gray-400 text-xs p-3">Please input a resource specifying containers and securityContext.</div>`;
     }
@@ -1014,63 +1211,77 @@ spec:
       el.verdictCard.className = 'bg-rh-dark border border-rh-border rounded-lg p-5 shadow-xl';
       el.verdictTitle.innerHTML = `<span class="text-gray-400">AWAITING SPECIFICATION</span>`;
       el.verdictSubtitle.textContent = 'Paste a Kubernetes or OpenShift manifest to evaluate.';
+      if (el.evalOrderRow) el.evalOrderRow.textContent = '';
       el.matchedSccPill.textContent = 'Waiting';
       el.violationsContainer.innerHTML = '';
       el.mutationsContainer.innerHTML = '';
     }
 
+    function showNoSccsGranted() {
+      el.verdictCard.className = 'bg-[#261517] border border-red-600/70 rounded-lg p-5 shadow-xl';
+      el.verdictTitle.innerHTML = `<span class="text-red-400">NO SCCs GRANTED</span>`;
+      el.verdictSubtitle.textContent = 'Enable at least one SCC on the ServiceAccount in Cluster Context.';
+      el.matchedSccPill.textContent = 'None';
+      el.violationsContainer.innerHTML = `<div class="text-gray-400 text-xs p-3">OpenShift cannot admit a pod if the service account has no usable SCCs.</div>`;
+    }
+
     function autoFixYaml() {
       let doc;
       try {
-        doc = js-yaml.load(el.yamlEditor.value);
+        doc = yamlLib().load(el.yamlEditor.value);
       } catch (e) {
+        showParseError(e.message);
         return;
       }
       if (!doc) return;
 
       const extracted = extractPodSpec(doc);
       if (!extracted) return;
-
       const podSpec = extracted.spec;
 
-      // 1. Remove host-level namespace leaks
       delete podSpec.hostNetwork;
       delete podSpec.hostPID;
       delete podSpec.hostIPC;
 
-      // 2. Fix HostPath volumes
-      if (podSpec.volumes && Array.isArray(podSpec.volumes)) {
-        podSpec.volumes.forEach(v => {
-          if (v.hostPath) {
-            delete v.hostPath;
+      if (Array.isArray(podSpec.volumes)) {
+        podSpec.volumes.forEach((v) => {
+          const type = volumeType(v);
+          if (type !== 'unknown' && !RESTRICTED_VOLUMES.includes(type)) {
+            delete v[type];
             v.emptyDir = {};
           }
         });
       }
 
-      // 3. Clean pod-level security context
       if (podSpec.securityContext) {
         delete podSpec.securityContext.runAsUser;
+        const fsGroup = podSpec.securityContext.fsGroup;
+        const range = parseUidRange(el.ctxUidRange.value);
+        if (fsGroup !== undefined && (fsGroup < range.min || fsGroup > range.max)) {
+          delete podSpec.securityContext.fsGroup;
+        }
+        if (podSpec.securityContext.seccompProfile) {
+          const n = normalizeSeccomp(podSpec.securityContext.seccompProfile);
+          if (n && n !== 'runtime/default') delete podSpec.securityContext.seccompProfile;
+        }
       }
 
-      // 4. Sanitize all containers
       const sanitizeContainer = (c) => {
         if (!c.securityContext) c.securityContext = {};
         delete c.securityContext.runAsUser;
         delete c.securityContext.privileged;
         c.securityContext.allowPrivilegeEscalation = false;
-        c.securityContext.capabilities = {
-          drop: ['ALL'],
-          add: ['NET_BIND_SERVICE']
-        };
+        c.securityContext.capabilities = { drop: ['ALL'], add: ['NET_BIND_SERVICE'] };
+        if (Array.isArray(c.ports)) {
+          c.ports.forEach((p) => { delete p.hostPort; });
+        }
       };
 
-      if (podSpec.containers) podSpec.containers.forEach(sanitizeContainer);
-      if (podSpec.initContainers) podSpec.initContainers.forEach(sanitizeContainer);
+      (podSpec.containers || []).forEach(sanitizeContainer);
+      (podSpec.initContainers || []).forEach(sanitizeContainer);
+      (podSpec.ephemeralContainers || []).forEach(sanitizeContainer);
 
-      // Serialize back to YAML
-      const newYaml = js-yaml.dump(doc, { indent: 2, lineWidth: -1 });
-      el.yamlEditor.value = newYaml;
+      el.yamlEditor.value = yamlLib().dump(doc, { indent: 2, lineWidth: -1 });
       updateGutter();
       evaluateSccAdmission();
     }
@@ -1078,10 +1289,9 @@ spec:
     function updateRbacSnippets() {
       const ns = el.ctxNamespace.value.trim() || 'prod-workloads';
       const sa = el.ctxServiceAccount.value.trim() || 'default';
-      const targetScc = state.violations[0]?.requiredScc || 'anyuid';
+      const targetScc = state.suggestedScc || 'anyuid';
 
       el.cliGrantCmd.textContent = `oc adm policy add-scc-to-user ${targetScc} -z ${sa} -n ${ns}`;
-
       el.yamlRoleBindingSnippet.textContent = `apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -1099,7 +1309,7 @@ roleRef:
 
     function switchTab(tab) {
       const tabs = ['violations', 'mutations', 'rbac'];
-      tabs.forEach(t => {
+      tabs.forEach((t) => {
         const btn = document.getElementById(`tab${t.charAt(0).toUpperCase() + t.slice(1)}Btn`);
         const content = document.getElementById(`tab${t.charAt(0).toUpperCase() + t.slice(1)}Content`);
         if (t === tab) {
@@ -1115,25 +1325,31 @@ roleRef:
     function copySnippet(elementId) {
       const node = document.getElementById(elementId);
       if (!node) return;
-      const text = node.innerText || node.textContent;
-      const temp = document.createElement('textarea');
-      temp.value = text;
-      document.body.appendChild(temp);
-      temp.select();
-      document.execCommand('copy');
-      document.body.removeChild(temp);
+      copyText(node.innerText || node.textContent);
+    }
+    window.copySnippet = copySnippet;
+
+    function bindEls() {
+      [
+        'yamlEditor', 'gutter', 'detectedKind', 'containerCount', 'verdictCard', 'verdictTitle',
+        'verdictSubtitle', 'verdictIconContainer', 'matchedSccPill', 'violationsContainer',
+        'mutationsContainer', 'violationCountBadge', 'mutationCountBadge', 'clusterDrawer',
+        'toggleClusterDrawerBtn', 'closeDrawerBtn', 'activeSccCountBadge', 'ctxNamespace',
+        'ctxServiceAccount', 'ctxUidRange', 'ctxMcsCategory', 'uidRangeHint', 'cliGrantCmd',
+        'yamlRoleBindingSnippet', 'validateBtn', 'autoFixBtn', 'copyYamlBtn', 'evalOrderRow'
+      ].forEach((id) => { el[id] = document.getElementById(id); });
     }
 
-    window.onload = function() {
-      // Load default compliant or root preset
+    window.onload = function () {
+      bindEls();
       el.yamlEditor.value = PRESETS.root;
       updateGutter();
       updateUidHint();
+      updateSccBadge();
 
-      // Preset buttons
-      document.querySelectorAll('.preset-btn').forEach(btn => {
+      document.querySelectorAll('.preset-btn').forEach((btn) => {
         btn.addEventListener('click', (e) => {
-          const p = e.target.getAttribute('data-preset');
+          const p = e.currentTarget.getAttribute('data-preset');
           if (PRESETS[p]) {
             el.yamlEditor.value = PRESETS[p];
             updateGutter();
@@ -1142,17 +1358,14 @@ roleRef:
         });
       });
 
-      // Editor input sync
       el.yamlEditor.addEventListener('input', () => {
         updateGutter();
         evaluateSccAdmission();
       });
-
       el.yamlEditor.addEventListener('scroll', () => {
         el.gutter.scrollTop = el.yamlEditor.scrollTop;
       });
 
-      // Cluster Drawer toggle
       el.toggleClusterDrawerBtn.addEventListener('click', () => {
         el.clusterDrawer.classList.toggle('hidden');
       });
@@ -1160,51 +1373,40 @@ roleRef:
         el.clusterDrawer.classList.add('hidden');
       });
 
-      // Namespace / SA input bindings
-      [el.ctxNamespace, el.ctxServiceAccount, el.ctxUidRange, el.ctxMcsCategory].forEach(input => {
+      [el.ctxNamespace, el.ctxServiceAccount, el.ctxUidRange, el.ctxMcsCategory].forEach((input) => {
         input.addEventListener('input', () => {
           updateUidHint();
           evaluateSccAdmission();
         });
       });
 
-      // Available SCC Checkboxes
-      ['restricted_v2', 'nonroot_v2', 'hostnetwork_v2', 'anyuid', 'privileged'].forEach(id => {
+      ['restricted_v2', 'nonroot_v2', 'hostnetwork_v2', 'anyuid', 'privileged'].forEach((id) => {
         const checkbox = document.getElementById(`scc_${id}`);
         checkbox.addEventListener('change', (e) => {
-          const key = id.replace('_', '-');
+          const key = id.replaceAll('_', '-');
           state.clusterSccs[key] = e.target.checked;
-          const activeCount = Object.values(state.clusterSccs).filter(Boolean).length;
-          el.activeSccCountBadge.textContent = `${activeCount} SCCs`;
+          updateSccBadge();
           evaluateSccAdmission();
         });
       });
 
-      // Action buttons
       el.validateBtn.addEventListener('click', evaluateSccAdmission);
       el.autoFixBtn.addEventListener('click', autoFixYaml);
       el.copyYamlBtn.addEventListener('click', () => {
-        const temp = document.createElement('textarea');
-        temp.value = el.yamlEditor.value;
-        document.body.appendChild(temp);
-        temp.select();
-        document.execCommand('copy');
-        document.body.removeChild(temp);
-        el.copyYamlBtn.innerHTML = `<span>Copied!</span>`;
-        setTimeout(() => {
-          el.copyYamlBtn.innerHTML = `
+        copyText(el.yamlEditor.value).then(() => {
+          el.copyYamlBtn.innerHTML = `<span>Copied!</span>`;
+          setTimeout(() => {
+            el.copyYamlBtn.innerHTML = `
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-            <span>Copy YAML</span>
-          `;
-        }, 1800);
+            <span>Copy YAML</span>`;
+          }, 1800);
+        });
       });
 
-      // Tab buttons
       document.getElementById('tabViolationsBtn').addEventListener('click', () => switchTab('violations'));
       document.getElementById('tabMutationsBtn').addEventListener('click', () => switchTab('mutations'));
       document.getElementById('tabRbacBtn').addEventListener('click', () => switchTab('rbac'));
 
-      // Initial execution
       evaluateSccAdmission();
     };
   </script>
