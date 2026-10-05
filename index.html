@@ -3,30 +3,32 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OpenShift SCC Workload Validator & Diagnostics Workbench</title>
+  <title>SCC Validator — OpenShift admission simulator</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600;700;800&family=Red+Hat+Mono:wght@400;500;600&family=Red+Hat+Text:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@500;700&family=Red+Hat+Mono:wght@400;500;600&family=Red+Hat+Text:wght@400;500;600&display=swap" rel="stylesheet">
   <script>
     tailwind.config = {
       theme: {
         extend: {
           colors: {
-            rh: {
-              red: '#EE0000',
-              redHover: '#BE0000',
-              black: '#151515',
-              dark: '#1F1F1F',
-              card: '#252528',
-              border: '#39393E',
-              accent: '#0066CC',
-              teal: '#009596',
-              gold: '#F0AB00',
-              green: '#3E8635',
-              muted: '#8A8D90'
-            }
+            ink: '#151515',
+            paper: '#f2f2f5',
+            panel: '#ffffff',
+            line: '#c8c8d0',
+            mute: '#6a6e73',
+            mark: '#c9190b',
+            markDark: '#a30000',
+            lake: '#0066cc',
+            ok: '#3d7317',
+            okBg: '#f3faf2',
+            bad: '#a30000',
+            badBg: '#faf0f0',
+            warn: '#795600',
+            warnBg: '#fff4ce',
+            code: '#1b1d21'
           },
           fontFamily: {
             sans: ['"Red Hat Text"', 'sans-serif'],
@@ -38,205 +40,266 @@
     }
   </script>
   <style>
-    /* Custom scrollbars */
-    ::-webkit-scrollbar { width: 7px; height: 7px; }
-    ::-webkit-scrollbar-track { background: #1a1a1c; }
-    ::-webkit-scrollbar-thumb { background: #39393e; border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: #55555c; }
-    
-    .editor-line-numbers {
-      counter-reset: line;
+    :root {
+      --ink: #151515;
+      --paper: #f2f2f5;
+      --panel: #ffffff;
+      --line: #c8c8d0;
+      --mute: #6a6e73;
+      --mark: #c9190b;
+      --ok: #3d7317;
+      --bad: #a30000;
+      --warn: #795600;
+      --code: #1b1d21;
     }
+    body {
+      background-color: var(--paper);
+      background-image:
+        linear-gradient(180deg, rgba(255,255,255,0.7) 0%, transparent 220px),
+        repeating-linear-gradient(
+          -12deg,
+          transparent,
+          transparent 11px,
+          rgba(21, 21, 21, 0.025) 11px,
+          rgba(21, 21, 21, 0.025) 12px
+        );
+    }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #b8bbc0; }
+    ::-webkit-scrollbar-thumb:hover { background: #8a8d90; }
     .line-gutter {
       user-select: none;
       text-align: right;
       padding-right: 12px;
       color: #6a6e73;
     }
-    textarea:focus {
-      outline: none;
+    textarea:focus, input:focus, summary:focus { outline: 2px solid #0066cc; outline-offset: 1px; }
+    #yamlEditor:focus { outline: none; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 0.375rem;
+      padding: 0.4rem 0.75rem; font-size: 0.75rem; font-weight: 600;
+      border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+      cursor: pointer; transition: background .12s, border-color .12s;
     }
-    .badge-glow {
-      box-shadow: 0 0 15px rgba(238, 0, 0, 0.25);
+    .btn:hover { background: #e9e9ef; border-color: #8a8d90; }
+    .btn-primary { background: var(--mark); border-color: var(--mark); color: #fff; }
+    .btn-primary:hover { background: #a30000; border-color: #a30000; }
+    .btn-quiet { background: transparent; }
+    .field {
+      width: 100%; border: 1px solid var(--line); background: #fff;
+      padding: 0.4rem 0.6rem; font-family: "Red Hat Mono", monospace;
+      font-size: 0.75rem; color: var(--ink);
     }
-    .badge-glow-green {
-      box-shadow: 0 0 15px rgba(62, 134, 53, 0.35);
+    .field:focus { border-color: #0066cc; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      border: 1px solid var(--line); background: #fff;
+      padding: 0.25rem 0.55rem; font-size: 0.75rem; cursor: pointer;
     }
-    .custom-checkbox:checked {
-      background-color: #EE0000;
-      border-color: #EE0000;
+    .chip:hover { border-color: #8a8d90; }
+    .preset {
+      border: 1px solid var(--line); background: #fff; color: var(--ink);
+      padding: 0.2rem 0.5rem; font-size: 0.7rem; cursor: pointer;
     }
+    .preset:hover { border-color: var(--ink); }
+    .preset[data-preset="root"] { border-left: 3px solid var(--bad); }
+    .preset[data-preset="hostpath"] { border-left: 3px solid #795600; }
+    .preset[data-preset="daemonset"] { border-left: 3px solid #5752d1; }
+    .preset[data-preset="compliant"] { border-left: 3px solid var(--ok); }
+    .surface {
+      background: var(--panel);
+      border: 1px solid var(--line);
+    }
+    .verdict {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-left: 4px solid #8a8d90;
+      padding: 1.1rem 1.25rem;
+    }
+    .verdict--ok { border-left-color: var(--ok); background: #f3faf2; }
+    .verdict--deny { border-left-color: var(--bad); background: #faf0f0; }
+    .verdict--warn { border-left-color: #f0ab00; background: #fff4ce; }
+    .verdict--idle { border-left-color: #8a8d90; background: var(--panel); }
+    .scc-tag {
+      font-family: "Red Hat Mono", monospace;
+      font-size: 0.7rem; font-weight: 600;
+      padding: 0.2rem 0.45rem;
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+    .scc-tag--ok { border-color: var(--ok); color: var(--ok); background: #f3faf2; }
+    .scc-tag--deny { border-color: var(--bad); color: var(--bad); background: #faf0f0; }
+    .tab {
+      padding: 0.55rem 0.75rem; font-size: 0.75rem; font-weight: 600;
+      color: var(--mute); border-bottom: 2px solid transparent; background: transparent;
+      cursor: pointer;
+    }
+    .tab:hover { color: var(--ink); }
+    .tab--active { color: var(--ink); border-bottom-color: var(--mark); }
+    .finding {
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--bad);
+      background: #fff;
+      padding: 0.75rem;
+      font-size: 0.75rem;
+    }
+    .mutation {
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--ok);
+      background: #fff;
+      padding: 0.55rem 0.7rem;
+      font-size: 0.75rem;
+    }
+    .codeblock {
+      background: var(--code);
+      color: #f0f0f0;
+      border: 1px solid #3c3f42;
+      padding: 0.65rem 0.75rem;
+      font-family: "Red Hat Mono", monospace;
+      font-size: 0.68rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+    }
+    .editor-shell { background: var(--code); color: #e1e1e1; }
+    .editor-gutter { background: #15171b; color: #6a6e73; border-right: 1px solid #3c3f42; }
+    .status-ok { color: var(--ok); }
+    .status-warn { color: var(--warn); }
   </style>
 </head>
-<body class="bg-[#121214] text-gray-200 font-sans min-h-screen flex flex-col antialiased">
+<body class="text-ink font-sans min-h-screen flex flex-col antialiased">
 
-  <header class="bg-rh-dark border-b border-rh-border sticky top-0 z-40 px-5 py-3 flex flex-wrap items-center justify-between gap-4">
-    <div class="flex items-center space-x-3">
-      <div class="w-8 h-8 rounded bg-rh-red flex items-center justify-center font-heading font-black text-white text-lg tracking-wider shadow-md">
-        RH
-      </div>
+  <header class="bg-panel border-b border-line sticky top-0 z-40">
+    <div class="max-w-[1600px] mx-auto px-4 md:px-6 py-3 flex flex-wrap items-end justify-between gap-4">
       <div>
-        <div class="flex items-center space-x-2">
-          <h1 class="font-heading font-bold text-white text-base md:text-lg tracking-tight">OpenShift SCC Diagnostics Workbench</h1>
-          <span class="text-xs px-2 py-0.5 rounded-full bg-rh-red/20 text-red-400 border border-rh-red/30 font-mono">v4.14+ Simulator</span>
+        <div class="flex items-baseline gap-3">
+          <h1 class="font-heading font-bold text-ink text-xl md:text-2xl tracking-tight">SCC Validator</h1>
+          <span class="font-mono text-[11px] text-mute">OpenShift 4.14+ admission simulator</span>
         </div>
-        <p class="text-xs text-rh-muted">Security Context Constraint (SCC) Admission Evaluator & Linter</p>
+        <p class="text-sm text-mute mt-0.5">Paste a workload. See which Security Context Constraint admits it — and why others refuse.</p>
       </div>
-    </div>
-
-    <!-- Header actions -->
-    <div class="flex items-center space-x-2">
-      <button id="toggleClusterDrawerBtn" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-md bg-[#2B2B2F] hover:bg-[#35353A] border border-rh-border text-xs font-medium text-gray-200 transition">
-        <svg class="w-4 h-4 text-rh-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-        <span>Cluster Context</span>
-        <span id="activeSccCountBadge" class="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-rh-accent text-white font-mono">1 SCC</span>
-      </button>
-
-      <button id="autoFixBtn" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-md bg-rh-green hover:bg-green-700 text-white text-xs font-semibold shadow-sm transition">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-        <span>Auto-Fix for restricted-v2</span>
-      </button>
-
-      <button id="validateBtn" class="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-md bg-rh-red hover:bg-rh-redHover text-white text-xs font-semibold shadow-md transition">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-        <span>Evaluate Admission</span>
-      </button>
+      <div class="flex flex-wrap items-center gap-2">
+        <button id="toggleClusterDrawerBtn" type="button" class="btn">
+          Cluster context
+          <span id="activeSccCountBadge" class="font-mono text-[10px] text-mute">1 SCC</span>
+        </button>
+        <button id="autoFixBtn" type="button" class="btn">Auto-fix for restricted-v2</button>
+        <button id="validateBtn" type="button" class="btn btn-primary">Evaluate admission</button>
+      </div>
     </div>
   </header>
 
-  <div id="clusterDrawer" class="bg-[#1A1A1E] border-b border-rh-border px-5 py-4 transition-all duration-300">
-    <div class="max-w-7xl mx-auto">
-      <div class="flex flex-wrap items-center justify-between pb-3 mb-3 border-b border-rh-border/60">
-        <div class="flex items-center space-x-2">
-          <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-          <h2 class="text-xs font-heading uppercase tracking-wider font-bold text-gray-300">Cluster & Project Admission Environment</h2>
-          <span class="text-xs text-rh-muted">(Import from cluster YAML, or edit manually)</span>
+  <div id="clusterDrawer" class="bg-panel border-b border-line">
+    <div class="max-w-[1600px] mx-auto px-4 md:px-6 py-4">
+      <div class="flex flex-wrap items-center justify-between gap-2 pb-3 mb-3 border-b border-line">
+        <div>
+          <h2 class="font-heading font-bold text-sm text-ink">Cluster context</h2>
+          <p class="text-[11px] text-mute">Import from cluster YAML, or edit manually. Nothing leaves this browser.</p>
         </div>
-        <button id="closeDrawerBtn" class="text-gray-400 hover:text-white text-xs flex items-center space-x-1">
-          <span>Minimize</span>
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path></svg>
-        </button>
+        <button id="closeDrawerBtn" type="button" class="btn btn-quiet text-xs">Minimize</button>
       </div>
 
-      <!-- Import cluster context from oc exports -->
-      <div class="mb-4 rounded-lg border border-rh-border bg-[#141416] p-3 text-xs">
+      <div class="mb-4 border border-line bg-paper p-3 text-xs">
         <div class="flex flex-wrap items-start justify-between gap-3 mb-2">
           <div>
-            <div class="text-gray-200 font-semibold text-xs">Import cluster context from YAML</div>
-            <p class="text-[11px] text-rh-muted mt-1 max-w-3xl leading-relaxed">
-              Export your namespace + RoleBindings on the cluster, then paste or upload them here.
-              The app fills UID range, MCS, and which SCCs the ServiceAccount can use. Nothing is sent to a server.
+            <div class="font-semibold text-ink">Import cluster context</div>
+            <p class="text-[11px] text-mute mt-1 max-w-3xl leading-relaxed">
+              Export your namespace and RoleBindings, then paste or upload them.
+              Fills UID range, MCS, and which SCCs the ServiceAccount may use.
             </p>
           </div>
           <div class="flex items-center gap-2 shrink-0">
-            <label class="cursor-pointer px-2.5 py-1.5 rounded-md bg-rh-accent/20 hover:bg-rh-accent/30 border border-rh-accent/40 text-blue-200 text-[11px] font-medium">
-              Upload YAML files
+            <label class="btn cursor-pointer">
+              Upload YAML
               <input id="ctxImportFiles" type="file" accept=".yaml,.yml,.json,text/yaml,application/yaml,application/json" multiple class="hidden">
             </label>
-            <button id="ctxImportPasteBtn" type="button" class="px-2.5 py-1.5 rounded-md bg-[#2B2B2F] hover:bg-[#35353A] border border-rh-border text-gray-200 text-[11px] font-medium">
-              Apply pasted YAML
-            </button>
+            <button id="ctxImportPasteBtn" type="button" class="btn btn-primary">Apply pasted YAML</button>
           </div>
         </div>
 
         <details open class="mb-2">
-          <summary class="cursor-pointer text-gray-300 hover:text-white select-none text-[11px]">Commands to fetch the YAML</summary>
+          <summary class="cursor-pointer text-ink font-medium select-none text-[11px]">Commands to fetch the YAML</summary>
           <div class="mt-2 relative">
-            <pre id="ocContextExport" class="bg-black p-2.5 rounded font-mono text-[10px] text-gray-300 overflow-x-auto border border-gray-800 whitespace-pre-wrap leading-relaxed"></pre>
-            <button type="button" onclick="copySnippet('ocContextExport')" class="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px]">Copy</button>
+            <pre id="ocContextExport" class="codeblock"></pre>
+            <button type="button" onclick="copySnippet('ocContextExport')" class="btn absolute top-2 right-2 text-[10px] py-0.5 px-1.5">Copy</button>
           </div>
-          <p class="text-[10px] text-rh-muted mt-1.5">
-            Minimum useful set: <span class="font-mono text-gray-400">ns.yaml</span> + <span class="font-mono text-gray-400">rb.yaml</span>.
-            Add <span class="font-mono text-gray-400">crb-scc.yaml</span> if elevated SCCs were granted cluster-wide.
+          <p class="text-[10px] text-mute mt-1.5">
+            Minimum: <span class="font-mono">ns.yaml</span> + <span class="font-mono">rb.yaml</span>.
+            Add <span class="font-mono">crb-scc.yaml</span> for cluster-wide SCC grants.
           </p>
         </details>
 
-        <textarea id="ctxImportEditor" spellcheck="false" rows="4" class="w-full bg-rh-dark border border-rh-border rounded px-2.5 py-2 text-[11px] font-mono text-gray-200 focus:border-rh-accent resize-y" placeholder="# Paste oc get ... -o yaml here (Namespace, RoleBinding, ClusterRoleBinding — multi-doc OK)"></textarea>
-        <p id="ctxImportStatus" class="mt-2 text-[11px] text-rh-muted min-h-[1.25rem]"></p>
+        <textarea id="ctxImportEditor" spellcheck="false" rows="4" class="field resize-y" placeholder="# Paste oc get ... -o yaml here (Namespace, RoleBinding, ClusterRoleBinding — multi-doc OK)"></textarea>
+        <p id="ctxImportStatus" class="mt-2 text-[11px] text-mute min-h-[1.25rem]"></p>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
-        <!-- Namespace -->
         <div>
-          <label class="block text-gray-400 font-medium mb-1">Target Namespace / Project</label>
-          <input type="text" id="ctxNamespace" value="prod-workloads" class="w-full bg-rh-dark border border-rh-border rounded px-2.5 py-1.5 text-gray-100 font-mono focus:border-rh-accent">
+          <label class="block text-mute font-medium mb-1" for="ctxNamespace">Namespace / project</label>
+          <input type="text" id="ctxNamespace" value="prod-workloads" class="field">
         </div>
-
-        <!-- ServiceAccount -->
         <div>
-          <label class="block text-gray-400 font-medium mb-1">Assigned ServiceAccount</label>
-          <input type="text" id="ctxServiceAccount" value="default" class="w-full bg-rh-dark border border-rh-border rounded px-2.5 py-1.5 text-gray-100 font-mono focus:border-rh-accent">
+          <label class="block text-mute font-medium mb-1" for="ctxServiceAccount">ServiceAccount</label>
+          <input type="text" id="ctxServiceAccount" value="default" class="field">
         </div>
-
-        <!-- UID Range Annotation -->
         <div>
-          <label class="block text-gray-400 font-medium mb-1">
-            <span>Namespace UID Range</span>
-            <span class="text-[10px] text-rh-muted ml-1">(openshift.io/sa.scc.uid-range)</span>
+          <label class="block text-mute font-medium mb-1" for="ctxUidRange">
+            UID range <span class="font-mono text-[10px] font-normal">(sa.scc.uid-range)</span>
           </label>
-          <input type="text" id="ctxUidRange" value="1000670000/10000" class="w-full bg-rh-dark border border-rh-border rounded px-2.5 py-1.5 text-gray-100 font-mono focus:border-rh-accent">
-          <p id="uidRangeHint" class="text-[10px] text-emerald-400 mt-1 font-mono">Valid UIDs: 1000670000 - 1000679999</p>
+          <input type="text" id="ctxUidRange" value="1000670000/10000" class="field">
+          <p id="uidRangeHint" class="text-[10px] text-mute mt-1 font-mono">Valid UIDs: 1000670000 - 1000679999</p>
         </div>
-
-        <!-- MCS Label Annotation -->
         <div>
-          <label class="block text-gray-400 font-medium mb-1">
-            <span>SELinux MCS Category</span>
-            <span class="text-[10px] text-rh-muted ml-1">(openshift.io/sa.scc.mcs)</span>
+          <label class="block text-mute font-medium mb-1" for="ctxMcsCategory">
+            SELinux MCS <span class="font-mono text-[10px] font-normal">(sa.scc.mcs)</span>
           </label>
-          <input type="text" id="ctxMcsCategory" value="s0:c26,c10" class="w-full bg-rh-dark border border-rh-border rounded px-2.5 py-1.5 text-gray-100 font-mono focus:border-rh-accent">
+          <input type="text" id="ctxMcsCategory" value="s0:c26,c10" class="field">
         </div>
       </div>
 
-      <!-- Candidate SCC Checklist -->
-      <div class="mt-4 pt-3 border-t border-rh-border/50">
-        <label class="block text-xs font-semibold text-gray-300 mb-1">SCCs this ServiceAccount may use</label>
-        <p class="text-[11px] text-rh-muted mb-3 leading-relaxed max-w-5xl">
-          Prefer <span class="text-gray-300">Import cluster context</span> above. Or tick manually:
-          a new project almost always has only <span class="font-mono text-gray-300">restricted-v2</span>
-          (via <span class="font-mono">system:authenticated</span>). Elevated SCCs appear only after a cluster-admin grant.
+      <div class="mt-4 pt-3 border-t border-line">
+        <label class="block text-xs font-semibold text-ink mb-1">SCCs this ServiceAccount may use</label>
+        <p class="text-[11px] text-mute mb-3 leading-relaxed max-w-5xl">
+          Prefer import above, or tick manually. A new project almost always has only
+          <span class="font-mono text-ink">restricted-v2</span>. Elevated SCCs need a cluster-admin grant.
         </p>
-        <div class="flex flex-wrap items-center gap-3 text-xs">
-          <label class="flex items-center space-x-1.5 bg-rh-dark border border-rh-border px-2.5 py-1 rounded cursor-pointer hover:border-gray-500">
-            <input type="checkbox" id="scc_restricted_v2" checked class="rounded bg-black border-gray-600 text-rh-red focus:ring-0">
-            <span class="font-mono text-gray-200">restricted-v2</span>
-            <span class="text-[10px] text-rh-muted">(Priority 0)</span>
+        <div class="flex flex-wrap items-center gap-2 text-xs">
+          <label class="chip">
+            <input type="checkbox" id="scc_restricted_v2" checked>
+            <span class="font-mono">restricted-v2</span>
+            <span class="text-mute text-[10px]">P0</span>
           </label>
-
-          <label class="flex items-center space-x-1.5 bg-rh-dark border border-rh-border px-2.5 py-1 rounded cursor-pointer hover:border-gray-500">
-            <input type="checkbox" id="scc_nonroot_v2" class="rounded bg-black border-gray-600 text-rh-red focus:ring-0">
-            <span class="font-mono text-gray-200">nonroot-v2</span>
-            <span class="text-[10px] text-rh-muted">(Priority 0)</span>
+          <label class="chip">
+            <input type="checkbox" id="scc_nonroot_v2">
+            <span class="font-mono">nonroot-v2</span>
+            <span class="text-mute text-[10px]">P0</span>
           </label>
-
-          <label class="flex items-center space-x-1.5 bg-rh-dark border border-rh-border px-2.5 py-1 rounded cursor-pointer hover:border-gray-500">
-            <input type="checkbox" id="scc_hostnetwork_v2" class="rounded bg-black border-gray-600 text-rh-red focus:ring-0">
-            <span class="font-mono text-gray-200">hostnetwork-v2</span>
+          <label class="chip">
+            <input type="checkbox" id="scc_hostnetwork_v2">
+            <span class="font-mono">hostnetwork-v2</span>
           </label>
-
-          <label class="flex items-center space-x-1.5 bg-rh-dark border border-rh-border px-2.5 py-1 rounded cursor-pointer hover:border-gray-500">
-            <input type="checkbox" id="scc_anyuid" class="rounded bg-black border-gray-600 text-rh-red focus:ring-0">
-            <span class="font-mono text-gray-200">anyuid</span>
-            <span class="text-[10px] text-rh-gold">(Priority 10 · UID 0)</span>
+          <label class="chip">
+            <input type="checkbox" id="scc_anyuid">
+            <span class="font-mono">anyuid</span>
+            <span class="text-mute text-[10px]">P10</span>
           </label>
-
-          <label class="flex items-center space-x-1.5 bg-rh-dark border border-rh-border px-2.5 py-1 rounded cursor-pointer hover:border-gray-500">
-            <input type="checkbox" id="scc_privileged" class="rounded bg-black border-gray-600 text-rh-red focus:ring-0">
-            <span class="font-mono text-gray-200">privileged</span>
-            <span class="text-[10px] text-red-400 font-bold">(Priority unset)</span>
+          <label class="chip">
+            <input type="checkbox" id="scc_privileged">
+            <span class="font-mono">privileged</span>
+            <span class="text-mute text-[10px]">unset</span>
           </label>
         </div>
 
-        <details class="mt-3 text-[11px] text-rh-muted">
-          <summary class="cursor-pointer text-gray-300 hover:text-white select-none">Verify admission on the cluster (optional)</summary>
+        <details class="mt-3 text-[11px] text-mute">
+          <summary class="cursor-pointer text-ink select-none">Verify on a real cluster (optional)</summary>
           <div class="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-3">
-            <div class="bg-[#141416] border border-rh-border rounded p-2.5">
-              <div class="text-gray-400 mb-1">Which SCC would this SA get for a file?</div>
-              <pre id="ocSccSubjectReview" class="font-mono text-[10px] text-gray-300 overflow-x-auto whitespace-pre-wrap">oc adm policy scc-subject-review -z default -n prod-workloads -f workload.yaml</pre>
+            <div class="border border-line bg-paper p-2.5">
+              <div class="text-mute mb-1">SCC subject review</div>
+              <pre id="ocSccSubjectReview" class="font-mono text-[10px] text-ink overflow-x-auto whitespace-pre-wrap">oc adm policy scc-subject-review -z default -n prod-workloads -f workload.yaml</pre>
             </div>
-            <div class="bg-[#141416] border border-rh-border rounded p-2.5">
-              <div class="text-gray-400 mb-1">Who can <span class="font-mono">use</span> a named SCC?</div>
-              <pre id="ocSccWhoCan" class="font-mono text-[10px] text-gray-300 overflow-x-auto whitespace-pre-wrap">oc adm policy who-can use sccs/restricted-v2</pre>
+            <div class="border border-line bg-paper p-2.5">
+              <div class="text-mute mb-1">Who can use an SCC</div>
+              <pre id="ocSccWhoCan" class="font-mono text-[10px] text-ink overflow-x-auto whitespace-pre-wrap">oc adm policy who-can use sccs/restricted-v2</pre>
             </div>
           </div>
         </details>
@@ -244,143 +307,96 @@
     </div>
   </div>
 
-  <main class="flex-1 max-w-[1700px] w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+  <main class="flex-1 max-w-[1600px] w-full mx-auto px-4 md:px-6 py-5 grid grid-cols-1 lg:grid-cols-12 gap-5">
 
-    <!-- LEFT COLUMN: Editor & Presets (7 cols) -->
-    <section class="lg:col-span-7 flex flex-col bg-rh-dark border border-rh-border rounded-lg shadow-xl overflow-hidden min-h-[640px]">
-      
-      <!-- Preset bar -->
-      <div class="bg-[#18181B] px-4 py-2.5 border-b border-rh-border flex flex-wrap items-center justify-between gap-2">
-        <div class="flex items-center space-x-2">
-          <svg class="w-4 h-4 text-rh-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-          <span class="text-xs font-semibold uppercase tracking-wider text-gray-400">Workload Definition</span>
-        </div>
-
-        <div class="flex items-center space-x-1.5 overflow-x-auto text-xs py-0.5">
-          <span class="text-rh-muted text-[11px] mr-1 hidden sm:inline">Load Sample:</span>
-          <button data-preset="root" class="preset-btn px-2 py-1 rounded bg-[#27272B] hover:bg-[#34343A] text-red-300 border border-red-900/40 transition">
-            UID 0 Root (Fails)
-          </button>
-          <button data-preset="hostpath" class="preset-btn px-2 py-1 rounded bg-[#27272B] hover:bg-[#34343A] text-yellow-300 border border-yellow-900/40 transition">
-            HostPath (Fails)
-          </button>
-          <button data-preset="daemonset" class="preset-btn px-2 py-1 rounded bg-[#27272B] hover:bg-[#34343A] text-purple-300 border border-purple-900/40 transition">
-            Privileged Agent
-          </button>
-          <button data-preset="compliant" class="preset-btn px-2 py-1 rounded bg-[#27272B] hover:bg-[#34343A] text-emerald-300 border border-emerald-900/40 transition">
-            Clean Microservice
-          </button>
+    <section class="lg:col-span-7 flex flex-col surface min-h-[640px] overflow-hidden">
+      <div class="px-4 py-2.5 border-b border-line flex flex-wrap items-center justify-between gap-2 bg-paper/80">
+        <span class="text-xs font-heading font-bold text-ink">Workload</span>
+        <div class="flex items-center gap-1.5 overflow-x-auto text-xs py-0.5">
+          <span class="text-mute text-[11px] mr-1 hidden sm:inline">Samples</span>
+          <button type="button" data-preset="root" class="preset-btn preset">UID 0 root</button>
+          <button type="button" data-preset="hostpath" class="preset-btn preset">HostPath</button>
+          <button type="button" data-preset="daemonset" class="preset-btn preset">Privileged agent</button>
+          <button type="button" data-preset="compliant" class="preset-btn preset">Clean microservice</button>
         </div>
       </div>
 
-      <!-- Editor Container -->
-      <div class="relative flex-1 flex bg-[#141416] font-mono text-xs overflow-hidden">
-        <!-- Line numbers gutter -->
-        <div id="gutter" class="line-gutter py-3 px-2 bg-[#101012] border-r border-rh-border/60 font-mono text-gray-600 select-none text-right min-w-[42px] leading-relaxed">
-          1
-        </div>
-        <!-- Editor textarea -->
-        <textarea id="yamlEditor" spellcheck="false" class="w-full h-full bg-transparent text-gray-200 p-3 leading-relaxed resize-none focus:outline-none font-mono text-xs selection:bg-rh-red/30" placeholder="# Paste your Deployment, Pod, StatefulSet, or DaemonSet YAML here..."></textarea>
+      <div class="relative flex-1 flex editor-shell font-mono text-xs overflow-hidden min-h-[420px]">
+        <div id="gutter" class="line-gutter editor-gutter py-3 px-2 font-mono select-none text-right min-w-[42px] leading-relaxed">1</div>
+        <textarea id="yamlEditor" spellcheck="false" class="w-full h-full bg-transparent text-[#e8e8e8] p-3 leading-relaxed resize-none font-mono text-xs selection:bg-mark/40" placeholder="# Paste Pod, Deployment, StatefulSet, DaemonSet, Job, or CronJob YAML..."></textarea>
       </div>
 
-      <!-- Editor Footer info -->
-      <div class="bg-[#18181B] px-4 py-2 border-t border-rh-border flex items-center justify-between text-xs text-rh-muted font-mono">
-        <div class="flex items-center space-x-3">
+      <div class="px-4 py-2 border-t border-line flex items-center justify-between text-xs text-mute font-mono bg-paper">
+        <div class="flex items-center gap-3">
           <span id="detectedKind">Kind: Unknown</span>
-          <span>•</span>
+          <span aria-hidden="true">·</span>
           <span id="containerCount">Containers: 0</span>
         </div>
-        <div class="flex items-center space-x-2">
-          <button id="copyYamlBtn" class="hover:text-white transition flex items-center space-x-1">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-            <span>Copy YAML</span>
-          </button>
-        </div>
+        <button id="copyYamlBtn" type="button" class="btn btn-quiet text-xs py-1">Copy YAML</button>
       </div>
     </section>
 
-    <!-- RIGHT COLUMN: Diagnostics & SCC Admission Results (5 cols) -->
-    <section class="lg:col-span-5 flex flex-col space-y-4">
-      
-      <!-- Admission Decision Card -->
-      <div id="verdictCard" class="bg-rh-dark border border-rh-border rounded-lg p-5 shadow-xl transition-all duration-300">
-        <div class="flex items-start justify-between">
+    <section class="lg:col-span-5 flex flex-col gap-4">
+      <div id="verdictCard" class="verdict verdict--idle">
+        <div class="flex items-start justify-between gap-3">
           <div>
-            <div class="text-[11px] font-heading uppercase tracking-wider text-gray-400 font-semibold mb-1">Admission Decision</div>
-            <div id="verdictTitle" class="text-xl font-heading font-black text-white flex items-center space-x-2">
-              <span>Checking specification...</span>
+            <div class="text-[11px] font-heading uppercase tracking-wide text-mute font-semibold mb-1">Admission decision</div>
+            <div id="verdictTitle" class="text-xl font-heading font-bold text-ink">
+              <span>Checking specification…</span>
             </div>
-            <div id="verdictSubtitle" class="text-xs text-gray-400 mt-1">
-              Validating against OpenShift mutating admission controllers
+            <div id="verdictSubtitle" class="text-xs text-mute mt-1">
+              Client-side SCC matching (priority, then restrictiveness, then name)
             </div>
           </div>
-          <div id="verdictIconContainer" class="p-2.5 rounded-lg bg-gray-800 text-gray-400">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-          </div>
+          <div id="verdictIconContainer" class="hidden" aria-hidden="true"></div>
         </div>
-
-        <!-- Matched SCC pill -->
-        <div class="mt-4 pt-3 border-t border-rh-border/60 flex items-center justify-between text-xs">
-          <span class="text-gray-400">Winning SCC Authorization:</span>
-          <span id="matchedSccPill" class="px-2.5 py-1 rounded bg-[#2D2D32] border border-rh-border font-mono text-gray-300">Evaluating...</span>
+        <div class="mt-4 pt-3 border-t border-line/80 flex items-center justify-between text-xs gap-2">
+          <span class="text-mute">Winning SCC</span>
+          <span id="matchedSccPill" class="scc-tag">Evaluating…</span>
         </div>
-        <div id="evalOrderRow" class="mt-2 text-[10px] text-rh-muted font-mono leading-relaxed"></div>
+        <div id="evalOrderRow" class="mt-2 text-[10px] text-mute font-mono leading-relaxed"></div>
       </div>
 
-      <!-- Violation and Mutation Details Tabs -->
-      <div class="flex-1 bg-rh-dark border border-rh-border rounded-lg shadow-xl flex flex-col overflow-hidden min-h-[400px]">
-        
-        <!-- Tab Headers -->
-        <div class="bg-[#18181B] px-3 pt-2 border-b border-rh-border flex items-center space-x-2">
-          <button id="tabViolationsBtn" class="px-3 py-2 text-xs font-semibold rounded-t-md border-b-2 border-rh-red text-white bg-rh-dark transition">
-            Violations & Barriers (<span id="violationCountBadge">0</span>)
+      <div class="flex-1 surface flex flex-col overflow-hidden min-h-[400px]">
+        <div class="px-2 border-b border-line flex items-center gap-1 bg-paper">
+          <button id="tabViolationsBtn" type="button" class="tab tab--active">
+            Violations (<span id="violationCountBadge">0</span>)
           </button>
-          <button id="tabMutationsBtn" class="px-3 py-2 text-xs font-semibold rounded-t-md border-b-2 border-transparent text-gray-400 hover:text-white transition">
-            Mutations by SCC (<span id="mutationCountBadge">0</span>)
+          <button id="tabMutationsBtn" type="button" class="tab">
+            Mutations (<span id="mutationCountBadge">0</span>)
           </button>
-          <button id="tabRbacBtn" class="px-3 py-2 text-xs font-semibold rounded-t-md border-b-2 border-transparent text-gray-400 hover:text-white transition">
-            RBAC Resolution
-          </button>
+          <button id="tabRbacBtn" type="button" class="tab">RBAC</button>
         </div>
 
-        <!-- Tab 1: Violations -->
-        <div id="tabViolationsContent" class="flex-1 p-4 overflow-y-auto space-y-3">
-          <div id="violationsContainer" class="space-y-3">
-            <!-- Dynamic violation cards injected here -->
-          </div>
+        <div id="tabViolationsContent" class="flex-1 p-4 overflow-y-auto">
+          <div id="violationsContainer" class="space-y-3"></div>
         </div>
 
-        <!-- Tab 2: SCC Injected Defaults & Mutations -->
-        <div id="tabMutationsContent" class="flex-1 p-4 overflow-y-auto space-y-3 hidden">
-          <div class="text-xs text-rh-muted mb-2">
-            These values were omitted from the input spec and automatically injected by the winning SCC mutating admission controller before writing to etcd:
+        <div id="tabMutationsContent" class="flex-1 p-4 overflow-y-auto hidden">
+          <div class="text-xs text-mute mb-2">
+            Values omitted from the input and injected by the winning SCC before etcd write:
           </div>
-          <div id="mutationsContainer" class="space-y-2 font-mono text-xs">
-            <!-- Dynamic mutations injected here -->
-          </div>
+          <div id="mutationsContainer" class="space-y-2 font-mono text-xs"></div>
         </div>
 
-        <!-- Tab 3: Actionable RBAC & Fix Guide -->
-        <div id="tabRbacContent" class="flex-1 p-4 overflow-y-auto space-y-4 hidden text-xs">
-          <div class="bg-[#141416] p-3 rounded border border-rh-border">
-            <h3 class="font-heading font-bold text-gray-200 text-sm mb-1">If this workload legitimately requires higher privileges:</h3>
-            <p class="text-gray-400 mb-3 leading-relaxed">
-              In OpenShift, developers cannot self-escalate. A <code class="text-red-400">cluster-admin</code> must associate the workload's ServiceAccount with an elevated SCC.
+        <div id="tabRbacContent" class="flex-1 p-4 overflow-y-auto hidden text-xs">
+          <div class="border border-line bg-paper p-3">
+            <h3 class="font-heading font-bold text-ink text-sm mb-1">If the workload truly needs higher privileges</h3>
+            <p class="text-mute mb-3 leading-relaxed">
+              Developers cannot self-escalate. A <code class="text-mark font-mono">cluster-admin</code> must bind the ServiceAccount to an elevated SCC.
             </p>
-
             <div class="space-y-3">
               <div>
-                <span class="text-gray-300 font-medium">1. Fast CLI Grant (Cluster Admin):</span>
+                <span class="text-ink font-medium">1. CLI grant</span>
                 <div class="relative mt-1">
-                  <pre id="cliGrantCmd" class="bg-black p-2.5 rounded font-mono text-gray-300 text-[11px] overflow-x-auto border border-gray-800">oc adm policy add-scc-to-user anyuid -z default -n prod-workloads</pre>
-                  <button onclick="copySnippet('cliGrantCmd')" class="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px]">Copy</button>
+                  <pre id="cliGrantCmd" class="codeblock">oc adm policy add-scc-to-user anyuid -z default -n prod-workloads</pre>
+                  <button type="button" onclick="copySnippet('cliGrantCmd')" class="btn absolute top-2 right-2 text-[10px] py-0.5 px-1.5">Copy</button>
                 </div>
               </div>
-
               <div>
-                <span class="text-gray-300 font-medium">2. Declarative GitOps RoleBinding (Recommended):</span>
+                <span class="text-ink font-medium">2. GitOps RoleBinding</span>
                 <div class="relative mt-1">
-                  <pre id="yamlRoleBindingSnippet" class="bg-black p-2.5 rounded font-mono text-gray-300 text-[11px] overflow-x-auto border border-gray-800">apiVersion: rbac.authorization.k8s.io/v1
+                  <pre id="yamlRoleBindingSnippet" class="codeblock">apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: system:openshift:scc:anyuid
@@ -393,21 +409,21 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: system:openshift:scc:anyuid</pre>
-                  <button onclick="copySnippet('yamlRoleBindingSnippet')" class="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px]">Copy</button>
+                  <button type="button" onclick="copySnippet('yamlRoleBindingSnippet')" class="btn absolute top-2 right-2 text-[10px] py-0.5 px-1.5">Copy</button>
                 </div>
               </div>
             </div>
           </div>
         </div>
-
       </div>
-
     </section>
   </main>
 
-  <footer class="px-5 py-3 text-[10px] text-rh-muted border-t border-rh-border">
-    Client-side simulator of OpenShift 4.14+ SCC admission: higher priority first, then most restrictive, then name.
-    Not a substitute for <code class="text-gray-400">oc create --dry-run=server</code> or <code class="text-gray-400">oc adm policy scc-subject-review</code>.
+  <footer class="px-4 md:px-6 py-3 text-[11px] text-mute border-t border-line bg-panel">
+    Client-side simulator — not a substitute for
+    <code class="font-mono text-ink">oc create --dry-run=server</code>
+    or
+    <code class="font-mono text-ink">oc adm policy scc-subject-review</code>.
   </footer>
 
   <script>
@@ -1153,8 +1169,8 @@ spec:
     }
 
     function renderAdmissionSuccess(sccName, mutations, orderText, evaluationOrder) {
-      el.verdictCard.className = 'bg-[#152317] border border-emerald-600/60 rounded-lg p-5 shadow-xl badge-glow-green transition-all duration-300';
-      el.verdictTitle.innerHTML = `<span class="text-emerald-400 flex items-center gap-2"><svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg> ADMISSION ALLOWED</span>`;
+      el.verdictCard.className = 'verdict verdict--ok';
+      el.verdictTitle.innerHTML = `<span class="text-ok">Admission allowed</span>`;
       const skipped = evaluationOrder.slice(0, evaluationOrder.indexOf(sccName));
       const extra = skipped.length
         ? ` Earlier candidates failed: ${skipped.join(', ')}.`
@@ -1163,122 +1179,110 @@ spec:
           : '');
       el.verdictSubtitle.textContent = `Pod satisfies '${sccName}' and would be admitted.${extra}`;
       el.evalOrderRow.textContent = orderText;
-
-      el.verdictIconContainer.className = 'p-2.5 rounded-lg bg-emerald-950 text-emerald-300 border border-emerald-700/50';
-      el.verdictIconContainer.innerHTML = `<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>`;
-
-      el.matchedSccPill.className = 'px-3 py-1 rounded bg-emerald-900/60 text-emerald-200 border border-emerald-600 font-mono font-bold text-xs';
+      el.matchedSccPill.className = 'scc-tag scc-tag--ok';
       el.matchedSccPill.textContent = sccName;
       el.violationCountBadge.textContent = '0';
       el.mutationCountBadge.textContent = `${mutations.length}`;
-
       el.violationsContainer.innerHTML = `
-        <div class="p-4 rounded-md bg-emerald-950/30 border border-emerald-800/40 text-emerald-300 text-xs">
-          <div class="font-bold flex items-center space-x-1.5 mb-1">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
-            <span>No SCC Admission Blockers</span>
-          </div>
-          This workload conforms to <strong class="text-white">${esc(sccName)}</strong>.
-          OpenShift tries granted SCCs by priority, then restrictiveness — the first match is recorded on the pod as <span class="font-mono">openshift.io/scc</span>.
-        </div>
-      `;
+        <div class="border border-line border-l-[3px] border-l-ok bg-okBg p-3 text-xs text-ink">
+          <div class="font-heading font-bold mb-1">No SCC blockers</div>
+          Conforms to <strong>${esc(sccName)}</strong>.
+          OpenShift records the winner on the pod as <span class="font-mono">openshift.io/scc</span>.
+        </div>`;
       renderMutations(mutations);
     }
 
     function renderViolationCard(v) {
       return `
-        <div class="p-3.5 rounded-md bg-[#1B1718] border border-red-900/50 text-xs space-y-2">
+        <div class="finding space-y-2">
           <div class="flex items-start justify-between gap-2">
-            <span class="font-mono text-red-400 font-semibold text-[11px] break-all">${esc(v.field)}</span>
-            <span class="px-1.5 py-0.5 rounded bg-red-950 text-red-300 border border-red-800 text-[10px] font-mono whitespace-nowrap">Value: ${esc(v.val)}</span>
+            <span class="font-mono text-bad font-semibold text-[11px] break-all">${esc(v.field)}</span>
+            <span class="font-mono text-[10px] text-mute whitespace-nowrap">= ${esc(v.val)}</span>
           </div>
-          <p class="text-gray-300 text-xs">${esc(v.reason)}</p>
-          <div class="bg-[#121011] p-2.5 rounded border border-rh-border flex items-start space-x-2 text-[11px]">
-            <span class="text-emerald-400 font-bold">Fix:</span>
-            <span class="text-gray-300">${esc(v.fix)}</span>
-          </div>
+          <p class="text-ink text-xs">${esc(v.reason)}</p>
+          <p class="text-[11px]"><span class="font-bold text-ok">Fix:</span> <span class="text-mute">${esc(v.fix)}</span></p>
         </div>`;
     }
 
     function renderAdmissionFailure(reports, orderText) {
-      el.verdictCard.className = 'bg-[#261517] border border-red-600/70 rounded-lg p-5 shadow-xl badge-glow transition-all duration-300';
-      el.verdictTitle.innerHTML = `<span class="text-red-400 flex items-center gap-2"><svg class="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path></svg> ADMISSION FORBIDDEN</span>`;
+      el.verdictCard.className = 'verdict verdict--deny';
+      el.verdictTitle.innerHTML = `<span class="text-bad">Admission forbidden</span>`;
       el.verdictSubtitle.textContent = 'Unable to validate against any granted Security Context Constraint.';
       el.evalOrderRow.textContent = orderText || '';
-
-      el.verdictIconContainer.className = 'p-2.5 rounded-lg bg-red-950 text-red-400 border border-red-800/50';
-      el.verdictIconContainer.innerHTML = `<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>`;
-
-      el.matchedSccPill.className = 'px-3 py-1 rounded bg-red-950 text-red-300 border border-red-800 font-mono text-xs';
-      el.matchedSccPill.textContent = 'None Matched';
+      el.matchedSccPill.className = 'scc-tag scc-tag--deny';
+      el.matchedSccPill.textContent = 'None matched';
       el.violationCountBadge.textContent = `${state.violations.length}`;
       el.mutationCountBadge.textContent = '0';
 
       let html = '';
       reports.forEach((r) => {
         html += `<div class="mb-4">
-          <div class="text-[11px] font-heading font-bold uppercase tracking-wide text-red-300 mb-2">
+          <div class="text-[11px] font-heading font-bold text-bad mb-2">
             Why ${esc(r.sccName)} failed (${r.violations.length})
           </div>
-          ${r.violations.map(renderViolationCard).join('')}
+          <div class="space-y-2">${r.violations.map(renderViolationCard).join('')}</div>
         </div>`;
       });
 
       el.violationsContainer.innerHTML = html;
-      el.mutationsContainer.innerHTML = `<div class="text-gray-500 text-center py-4">No mutations applied (Pod was rejected at admission).</div>`;
+      el.mutationsContainer.innerHTML = `<div class="text-mute text-center py-4">No mutations (pod rejected).</div>`;
       switchTab('violations');
     }
 
     function renderMutations(mutations) {
       if (!mutations.length) {
-        el.mutationsContainer.innerHTML = `<div class="text-gray-500 text-center py-4">No mutations necessary.</div>`;
+        el.mutationsContainer.innerHTML = `<div class="text-mute text-center py-4">No mutations necessary.</div>`;
         return;
       }
       el.mutationsContainer.innerHTML = mutations.map((m) => `
-        <div class="p-2.5 rounded bg-[#161618] border border-rh-border flex flex-col space-y-1">
-          <div class="flex items-center justify-between text-gray-300 gap-2">
-            <span class="text-emerald-400 text-[11px] font-mono break-all">${esc(m.field)}</span>
-            <span class="text-[10px] text-rh-muted whitespace-nowrap">${esc(m.source)}</span>
+        <div class="mutation">
+          <div class="flex items-center justify-between gap-2 mb-1">
+            <span class="text-ok text-[11px] font-mono break-all">${esc(m.field)}</span>
+            <span class="text-[10px] text-mute whitespace-nowrap">${esc(m.source)}</span>
           </div>
-          <div class="text-white text-xs bg-black/60 px-2 py-1 rounded border border-gray-800">${esc(m.injectedValue)}</div>
+          <div class="font-mono text-ink text-xs bg-paper px-2 py-1 border border-line">${esc(m.injectedValue)}</div>
         </div>`).join('');
     }
 
     function showParseError(msg) {
-      el.verdictCard.className = 'bg-[#231E15] border border-amber-600/70 rounded-lg p-5 shadow-xl';
-      el.verdictTitle.innerHTML = `<span class="text-amber-400">YAML SYNTAX ERROR</span>`;
+      el.verdictCard.className = 'verdict verdict--warn';
+      el.verdictTitle.innerHTML = `<span class="text-warn">YAML syntax error</span>`;
       el.verdictSubtitle.textContent = msg;
       if (el.evalOrderRow) el.evalOrderRow.textContent = '';
-      el.matchedSccPill.textContent = 'Parse Error';
-      el.violationsContainer.innerHTML = `<div class="p-3 bg-amber-950/40 border border-amber-800 text-amber-200 text-xs rounded">${esc(msg)}</div>`;
+      el.matchedSccPill.className = 'scc-tag';
+      el.matchedSccPill.textContent = 'Parse error';
+      el.violationsContainer.innerHTML = `<div class="border border-line bg-warnBg p-3 text-xs text-ink">${esc(msg)}</div>`;
       el.violationCountBadge.textContent = '!';
     }
 
     function showInvalidObjectError(kind) {
-      el.verdictCard.className = 'bg-[#1F1F24] border border-gray-600 rounded-lg p-5 shadow-xl';
-      el.verdictTitle.innerHTML = `<span class="text-gray-300">NON-WORKLOAD OBJECT</span>`;
+      el.verdictCard.className = 'verdict verdict--idle';
+      el.verdictTitle.innerHTML = `<span class="text-mute">Not a workload</span>`;
       el.verdictSubtitle.textContent = `Kind '${kind}' does not declare a Pod template. Provide a Pod, Deployment, StatefulSet, DaemonSet, Job, CronJob, ReplicaSet, or DeploymentConfig.`;
       if (el.evalOrderRow) el.evalOrderRow.textContent = '';
+      el.matchedSccPill.className = 'scc-tag';
       el.matchedSccPill.textContent = 'N/A';
-      el.violationsContainer.innerHTML = `<div class="text-gray-400 text-xs p-3">Please input a resource specifying containers and securityContext.</div>`;
+      el.violationsContainer.innerHTML = `<div class="text-mute text-xs p-2">Paste a resource with containers / securityContext.</div>`;
     }
 
     function showEmptyState() {
-      el.verdictCard.className = 'bg-rh-dark border border-rh-border rounded-lg p-5 shadow-xl';
-      el.verdictTitle.innerHTML = `<span class="text-gray-400">AWAITING SPECIFICATION</span>`;
+      el.verdictCard.className = 'verdict verdict--idle';
+      el.verdictTitle.innerHTML = `<span class="text-mute">Awaiting specification</span>`;
       el.verdictSubtitle.textContent = 'Paste a Kubernetes or OpenShift manifest to evaluate.';
       if (el.evalOrderRow) el.evalOrderRow.textContent = '';
+      el.matchedSccPill.className = 'scc-tag';
       el.matchedSccPill.textContent = 'Waiting';
       el.violationsContainer.innerHTML = '';
       el.mutationsContainer.innerHTML = '';
     }
 
     function showNoSccsGranted() {
-      el.verdictCard.className = 'bg-[#261517] border border-red-600/70 rounded-lg p-5 shadow-xl';
-      el.verdictTitle.innerHTML = `<span class="text-red-400">NO SCCs GRANTED</span>`;
-      el.verdictSubtitle.textContent = 'Enable at least one SCC on the ServiceAccount in Cluster Context.';
+      el.verdictCard.className = 'verdict verdict--deny';
+      el.verdictTitle.innerHTML = `<span class="text-bad">No SCCs granted</span>`;
+      el.verdictSubtitle.textContent = 'Enable at least one SCC on the ServiceAccount in Cluster context.';
+      el.matchedSccPill.className = 'scc-tag scc-tag--deny';
       el.matchedSccPill.textContent = 'None';
-      el.violationsContainer.innerHTML = `<div class="text-gray-400 text-xs p-3">OpenShift cannot admit a pod if the service account has no usable SCCs.</div>`;
+      el.violationsContainer.innerHTML = `<div class="text-mute text-xs p-2">OpenShift cannot admit a pod if the service account has no usable SCCs.</div>`;
     }
 
     function autoFixYaml() {
@@ -1406,8 +1410,8 @@ spec:
       if (!el.ctxImportStatus) return;
       el.ctxImportStatus.textContent = msg;
       el.ctxImportStatus.className = ok
-        ? 'mt-2 text-[11px] text-emerald-400 min-h-[1.25rem]'
-        : 'mt-2 text-[11px] text-amber-300 min-h-[1.25rem]';
+        ? 'mt-2 text-[11px] status-ok min-h-[1.25rem]'
+        : 'mt-2 text-[11px] status-warn min-h-[1.25rem]';
     }
 
     function importClusterContextYaml(raw) {
@@ -1584,10 +1588,10 @@ roleRef:
         const btn = document.getElementById(`tab${t.charAt(0).toUpperCase() + t.slice(1)}Btn`);
         const content = document.getElementById(`tab${t.charAt(0).toUpperCase() + t.slice(1)}Content`);
         if (t === tab) {
-          btn.className = 'px-3 py-2 text-xs font-semibold rounded-t-md border-b-2 border-rh-red text-white bg-rh-dark transition';
+          btn.className = 'tab tab--active';
           content.classList.remove('hidden');
         } else {
-          btn.className = 'px-3 py-2 text-xs font-semibold rounded-t-md border-b-2 border-transparent text-gray-400 hover:text-white transition';
+          btn.className = 'tab';
           content.classList.add('hidden');
         }
       });
@@ -1681,12 +1685,8 @@ roleRef:
       el.autoFixBtn.addEventListener('click', autoFixYaml);
       el.copyYamlBtn.addEventListener('click', () => {
         copyText(el.yamlEditor.value).then(() => {
-          el.copyYamlBtn.innerHTML = `<span>Copied!</span>`;
-          setTimeout(() => {
-            el.copyYamlBtn.innerHTML = `
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-            <span>Copy YAML</span>`;
-          }, 1800);
+          el.copyYamlBtn.textContent = 'Copied';
+          setTimeout(() => { el.copyYamlBtn.textContent = 'Copy YAML'; }, 1800);
         });
       });
 
