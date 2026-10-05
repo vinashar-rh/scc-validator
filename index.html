@@ -1,0 +1,1212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenShift SCC Workload Validator & Diagnostics Workbench</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600;700;800&family=Red+Hat+Mono:wght@400;500;600&family=Red+Hat+Text:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            rh: {
+              red: '#EE0000',
+              redHover: '#BE0000',
+              black: '#151515',
+              dark: '#1F1F1F',
+              card: '#252528',
+              border: '#39393E',
+              accent: '#0066CC',
+              teal: '#009596',
+              gold: '#F0AB00',
+              green: '#3E8635',
+              muted: '#8A8D90'
+            }
+          },
+          fontFamily: {
+            sans: ['"Red Hat Text"', 'sans-serif'],
+            heading: ['"Red Hat Display"', 'sans-serif'],
+            mono: ['"Red Hat Mono"', 'monospace']
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Custom scrollbars */
+    ::-webkit-scrollbar { width: 7px; height: 7px; }
+    ::-webkit-scrollbar-track { background: #1a1a1c; }
+    ::-webkit-scrollbar-thumb { background: #39393e; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #55555c; }
+    
+    .editor-line-numbers {
+      counter-reset: line;
+    }
+    .line-gutter {
+      user-select: none;
+      text-align: right;
+      padding-right: 12px;
+      color: #6a6e73;
+    }
+    textarea:focus {
+      outline: none;
+    }
+    .badge-glow {
+      box-shadow: 0 0 15px rgba(238, 0, 0, 0.25);
+    }
+    .badge-glow-green {
+      box-shadow: 0 0 15px rgba(62, 134, 53, 0.35);
+    }
+    .custom-checkbox:checked {
+      background-color: #EE0000;
+      border-color: #EE0000;
+    }
+  </style>
+</head>
+<body class="bg-[#121214] text-gray-200 font-sans min-h-screen flex flex-col antialiased">
+
+  <header class="bg-rh-dark border-b border-rh-border sticky top-0 z-40 px-5 py-3 flex flex-wrap items-center justify-between gap-4">
+    <div class="flex items-center space-x-3">
+      <div class="w-8 h-8 rounded bg-rh-red flex items-center justify-center font-heading font-black text-white text-lg tracking-wider shadow-md">
+        RH
+      </div>
+      <div>
+        <div class="flex items-center space-x-2">
+          <h1 class="font-heading font-bold text-white text-base md:text-lg tracking-tight">OpenShift SCC Diagnostics Workbench</h1>
+          <span class="text-xs px-2 py-0.5 rounded-full bg-rh-red/20 text-red-400 border border-rh-red/30 font-mono">v4.14+ Engine</span>
+        </div>
+        <p class="text-xs text-rh-muted">Security Context Constraint (SCC) Admission Evaluator & Linter</p>
+      </div>
+    </div>
+
+    <!-- Header actions -->
+    <div class="flex items-center space-x-2">
+      <button id="toggleClusterDrawerBtn" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-md bg-[#2B2B2F] hover:bg-[#35353A] border border-rh-border text-xs font-medium text-gray-200 transition">
+        <svg class="w-4 h-4 text-rh-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+        <span>Cluster Context</span>
+        <span id="activeSccCountBadge" class="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-rh-accent text-white font-mono">5 SCCs</span>
+      </button>
+
+      <button id="autoFixBtn" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-md bg-rh-green hover:bg-green-700 text-white text-xs font-semibold shadow-sm transition">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+        <span>Auto-Fix for restricted-v2</span>
+      </button>
+
+      <button id="validateBtn" class="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-md bg-rh-red hover:bg-rh-redHover text-white text-xs font-semibold shadow-md transition">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+        <span>Evaluate Admission</span>
+      </button>
+    </div>
+  </header>
+
+  <div id="clusterDrawer" class="bg-[#1A1A1E] border-b border-rh-border px-5 py-4 transition-all duration-300">
+    <div class="max-w-7xl mx-auto">
+      <div class="flex flex-wrap items-center justify-between pb-3 mb-3 border-b border-rh-border/60">
+        <div class="flex items-center space-x-2">
+          <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          <h2 class="text-xs font-heading uppercase tracking-wider font-bold text-gray-300">Cluster & Project Admission Environment</h2>
+          <span class="text-xs text-rh-muted">(Simulates Namespace Annotations & Assigned ServiceAccount Roles)</span>
+        </div>
+        <button id="closeDrawerBtn" class="text-gray-400 hover:text-white text-xs flex items-center space-x-1">
+          <span>Minimize</span>
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path></svg>
+        </button>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+        <!-- Namespace -->
+        <div>
+          <label class="block text-gray-400 font-medium mb-1">Target Namespace / Project</label>
+          <input type="text" id="ctxNamespace" value="prod-workloads" class="w-full bg-rh-dark border border-rh-border rounded px-2.5 py-1.5 text-gray-100 font-mono focus:border-rh-accent">
+        </div>
+
+        <!-- ServiceAccount -->
+        <div>
+          <label class="block text-gray-400 font-medium mb-1">Assigned ServiceAccount</label>
+          <input type="text" id="ctxServiceAccount" value="default" class="w-full bg-rh-dark border border-rh-border rounded px-2.5 py-1.5 text-gray-100 font-mono focus:border-rh-accent">
+        </div>
+
+        <!-- UID Range Annotation -->
+        <div>
+          <label class="block text-gray-400 font-medium mb-1">
+            <span>Namespace UID Range</span>
+            <span class="text-[10px] text-rh-muted ml-1">(openshift.io/sa.scc.uid-range)</span>
+          </label>
+          <input type="text" id="ctxUidRange" value="1000670000/10000" class="w-full bg-rh-dark border border-rh-border rounded px-2.5 py-1.5 text-gray-100 font-mono focus:border-rh-accent">
+          <p id="uidRangeHint" class="text-[10px] text-emerald-400 mt-1 font-mono">Valid UIDs: 1000670000 - 1000679999</p>
+        </div>
+
+        <!-- MCS Label Annotation -->
+        <div>
+          <label class="block text-gray-400 font-medium mb-1">
+            <span>SELinux MCS Category</span>
+            <span class="text-[10px] text-rh-muted ml-1">(openshift.io/sa.scc.mcs)</span>
+          </label>
+          <input type="text" id="ctxMcsCategory" value="s0:c26,c10" class="w-full bg-rh-dark border border-rh-border rounded px-2.5 py-1.5 text-gray-100 font-mono focus:border-rh-accent">
+        </div>
+      </div>
+
+      <!-- Candidate SCC Checklist -->
+      <div class="mt-4 pt-3 border-t border-rh-border/50">
+        <label class="block text-xs font-semibold text-gray-300 mb-2">Available SCCs for ServiceAccount (Simulated ClusterRoles):</label>
+        <div class="flex flex-wrap items-center gap-3 text-xs">
+          <label class="flex items-center space-x-1.5 bg-rh-dark border border-rh-border px-2.5 py-1 rounded cursor-pointer hover:border-gray-500">
+            <input type="checkbox" id="scc_restricted_v2" checked class="rounded bg-black border-gray-600 text-rh-red focus:ring-0">
+            <span class="font-mono text-gray-200">restricted-v2</span>
+            <span class="text-[10px] text-rh-muted">(Priority 0)</span>
+          </label>
+
+          <label class="flex items-center space-x-1.5 bg-rh-dark border border-rh-border px-2.5 py-1 rounded cursor-pointer hover:border-gray-500">
+            <input type="checkbox" id="scc_nonroot_v2" class="rounded bg-black border-gray-600 text-rh-red focus:ring-0">
+            <span class="font-mono text-gray-200">nonroot-v2</span>
+            <span class="text-[10px] text-rh-muted">(Priority 0)</span>
+          </label>
+
+          <label class="flex items-center space-x-1.5 bg-rh-dark border border-rh-border px-2.5 py-1 rounded cursor-pointer hover:border-gray-500">
+            <input type="checkbox" id="scc_hostnetwork_v2" class="rounded bg-black border-gray-600 text-rh-red focus:ring-0">
+            <span class="font-mono text-gray-200">hostnetwork-v2</span>
+          </label>
+
+          <label class="flex items-center space-x-1.5 bg-rh-dark border border-rh-border px-2.5 py-1 rounded cursor-pointer hover:border-gray-500">
+            <input type="checkbox" id="scc_anyuid" class="rounded bg-black border-gray-600 text-rh-red focus:ring-0">
+            <span class="font-mono text-gray-200">anyuid</span>
+            <span class="text-[10px] text-rh-gold">(Allows UID 0)</span>
+          </label>
+
+          <label class="flex items-center space-x-1.5 bg-rh-dark border border-rh-border px-2.5 py-1 rounded cursor-pointer hover:border-gray-500">
+            <input type="checkbox" id="scc_privileged" class="rounded bg-black border-gray-600 text-rh-red focus:ring-0">
+            <span class="font-mono text-gray-200">privileged</span>
+            <span class="text-[10px] text-red-400 font-bold">(Unrestricted)</span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <main class="flex-1 max-w-[1700px] w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+    <!-- LEFT COLUMN: Editor & Presets (7 cols) -->
+    <section class="lg:col-span-7 flex flex-col bg-rh-dark border border-rh-border rounded-lg shadow-xl overflow-hidden min-h-[640px]">
+      
+      <!-- Preset bar -->
+      <div class="bg-[#18181B] px-4 py-2.5 border-b border-rh-border flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center space-x-2">
+          <svg class="w-4 h-4 text-rh-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+          <span class="text-xs font-semibold uppercase tracking-wider text-gray-400">Workload Definition</span>
+        </div>
+
+        <div class="flex items-center space-x-1.5 overflow-x-auto text-xs py-0.5">
+          <span class="text-rh-muted text-[11px] mr-1 hidden sm:inline">Load Sample:</span>
+          <button data-preset="root" class="preset-btn px-2 py-1 rounded bg-[#27272B] hover:bg-[#34343A] text-red-300 border border-red-900/40 transition">
+            UID 0 Root (Fails)
+          </button>
+          <button data-preset="hostpath" class="preset-btn px-2 py-1 rounded bg-[#27272B] hover:bg-[#34343A] text-yellow-300 border border-yellow-900/40 transition">
+            HostPath (Fails)
+          </button>
+          <button data-preset="daemonset" class="preset-btn px-2 py-1 rounded bg-[#27272B] hover:bg-[#34343A] text-purple-300 border border-purple-900/40 transition">
+            Privileged Agent
+          </button>
+          <button data-preset="compliant" class="preset-btn px-2 py-1 rounded bg-[#27272B] hover:bg-[#34343A] text-emerald-300 border border-emerald-900/40 transition">
+            Clean Microservice
+          </button>
+        </div>
+      </div>
+
+      <!-- Editor Container -->
+      <div class="relative flex-1 flex bg-[#141416] font-mono text-xs overflow-hidden">
+        <!-- Line numbers gutter -->
+        <div id="gutter" class="line-gutter py-3 px-2 bg-[#101012] border-r border-rh-border/60 font-mono text-gray-600 select-none text-right min-w-[42px] leading-relaxed">
+          1
+        </div>
+        <!-- Editor textarea -->
+        <textarea id="yamlEditor" spellcheck="false" class="w-full h-full bg-transparent text-gray-200 p-3 leading-relaxed resize-none focus:outline-none font-mono text-xs selection:bg-rh-red/30" placeholder="# Paste your Deployment, Pod, StatefulSet, or DaemonSet YAML here..."></textarea>
+      </div>
+
+      <!-- Editor Footer info -->
+      <div class="bg-[#18181B] px-4 py-2 border-t border-rh-border flex items-center justify-between text-xs text-rh-muted font-mono">
+        <div class="flex items-center space-x-3">
+          <span id="detectedKind">Kind: Unknown</span>
+          <span>•</span>
+          <span id="containerCount">Containers: 0</span>
+        </div>
+        <div class="flex items-center space-x-2">
+          <button id="copyYamlBtn" class="hover:text-white transition flex items-center space-x-1">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+            <span>Copy YAML</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT COLUMN: Diagnostics & SCC Admission Results (5 cols) -->
+    <section class="lg:col-span-5 flex flex-col space-y-4">
+      
+      <!-- Admission Decision Card -->
+      <div id="verdictCard" class="bg-rh-dark border border-rh-border rounded-lg p-5 shadow-xl transition-all duration-300">
+        <div class="flex items-start justify-between">
+          <div>
+            <div class="text-[11px] font-heading uppercase tracking-wider text-gray-400 font-semibold mb-1">Admission Decision</div>
+            <div id="verdictTitle" class="text-xl font-heading font-black text-white flex items-center space-x-2">
+              <span>Checking specification...</span>
+            </div>
+            <div id="verdictSubtitle" class="text-xs text-gray-400 mt-1">
+              Validating against OpenShift mutating admission controllers
+            </div>
+          </div>
+          <div id="verdictIconContainer" class="p-2.5 rounded-lg bg-gray-800 text-gray-400">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+          </div>
+        </div>
+
+        <!-- Matched SCC pill -->
+        <div class="mt-4 pt-3 border-t border-rh-border/60 flex items-center justify-between text-xs">
+          <span class="text-gray-400">Winning SCC Authorization:</span>
+          <span id="matchedSccPill" class="px-2.5 py-1 rounded bg-[#2D2D32] border border-rh-border font-mono text-gray-300">Evaluating...</span>
+        </div>
+      </div>
+
+      <!-- Violation and Mutation Details Tabs -->
+      <div class="flex-1 bg-rh-dark border border-rh-border rounded-lg shadow-xl flex flex-col overflow-hidden min-h-[400px]">
+        
+        <!-- Tab Headers -->
+        <div class="bg-[#18181B] px-3 pt-2 border-b border-rh-border flex items-center space-x-2">
+          <button id="tabViolationsBtn" class="px-3 py-2 text-xs font-semibold rounded-t-md border-b-2 border-rh-red text-white bg-rh-dark transition">
+            Violations & Barriers (<span id="violationCountBadge">0</span>)
+          </button>
+          <button id="tabMutationsBtn" class="px-3 py-2 text-xs font-semibold rounded-t-md border-b-2 border-transparent text-gray-400 hover:text-white transition">
+            Mutations by SCC (<span id="mutationCountBadge">0</span>)
+          </button>
+          <button id="tabRbacBtn" class="px-3 py-2 text-xs font-semibold rounded-t-md border-b-2 border-transparent text-gray-400 hover:text-white transition">
+            RBAC Resolution
+          </button>
+        </div>
+
+        <!-- Tab 1: Violations -->
+        <div id="tabViolationsContent" class="flex-1 p-4 overflow-y-auto space-y-3">
+          <div id="violationsContainer" class="space-y-3">
+            <!-- Dynamic violation cards injected here -->
+          </div>
+        </div>
+
+        <!-- Tab 2: SCC Injected Defaults & Mutations -->
+        <div id="tabMutationsContent" class="flex-1 p-4 overflow-y-auto space-y-3 hidden">
+          <div class="text-xs text-rh-muted mb-2">
+            These values were omitted from the input spec and automatically injected by the winning SCC mutating admission controller before writing to etcd:
+          </div>
+          <div id="mutationsContainer" class="space-y-2 font-mono text-xs">
+            <!-- Dynamic mutations injected here -->
+          </div>
+        </div>
+
+        <!-- Tab 3: Actionable RBAC & Fix Guide -->
+        <div id="tabRbacContent" class="flex-1 p-4 overflow-y-auto space-y-4 hidden text-xs">
+          <div class="bg-[#141416] p-3 rounded border border-rh-border">
+            <h3 class="font-heading font-bold text-gray-200 text-sm mb-1">If this workload legitimately requires higher privileges:</h3>
+            <p class="text-gray-400 mb-3 leading-relaxed">
+              In OpenShift, developers cannot self-escalate. A <code class="text-red-400">cluster-admin</code> must associate the workload's ServiceAccount with an elevated SCC.
+            </p>
+
+            <div class="space-y-3">
+              <div>
+                <span class="text-gray-300 font-medium">1. Fast CLI Grant (Cluster Admin):</span>
+                <div class="relative mt-1">
+                  <pre id="cliGrantCmd" class="bg-black p-2.5 rounded font-mono text-gray-300 text-[11px] overflow-x-auto border border-gray-800">oc adm policy add-scc-to-user anyuid -z default -n prod-workloads</pre>
+                  <button onclick="copySnippet('cliGrantCmd')" class="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px]">Copy</button>
+                </div>
+              </div>
+
+              <div>
+                <span class="text-gray-300 font-medium">2. Declarative GitOps RoleBinding (Recommended):</span>
+                <div class="relative mt-1">
+                  <pre id="yamlRoleBindingSnippet" class="bg-black p-2.5 rounded font-mono text-gray-300 text-[11px] overflow-x-auto border border-gray-800">apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: system:openshift:scc:anyuid
+  namespace: prod-workloads
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: prod-workloads
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid</pre>
+                  <button onclick="copySnippet('yamlRoleBindingSnippet')" class="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px]">Copy</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </section>
+  </main>
+
+  <script>
+    const PRESETS = {
+      root: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: legacy-root-service
+  namespace: prod-workloads
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: legacy-root
+  template:
+    metadata:
+      labels:
+        app: legacy-root
+    spec:
+      serviceAccountName: default
+      containers:
+      - name: web
+        image: registry.access.redhat.com/ubi9/ubi:latest
+        command: ["sleep", "3600"]
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: true
+          capabilities:
+            add: ["SYS_TIME", "NET_ADMIN"]`,
+
+      hostpath: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: log-collector
+  namespace: prod-workloads
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: log-collector
+  template:
+    metadata:
+      labels:
+        app: log-collector
+    spec:
+      serviceAccountName: default
+      volumes:
+      - name: host-log-volume
+        hostPath:
+          path: /var/log
+          type: Directory
+      containers:
+      - name: fluentd
+        image: fluent/fluentd:v1.16
+        volumeMounts:
+        - mountPath: /var/log
+          name: host-log-volume`,
+
+      daemonset: `apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-diagnostic-probe
+  namespace: prod-workloads
+spec:
+  selector:
+    matchLabels:
+      app: diagnostic-probe
+  template:
+    metadata:
+      labels:
+        app: diagnostic-probe
+    spec:
+      hostNetwork: true
+      hostPID: true
+      serviceAccountName: default
+      containers:
+      - name: probe
+        image: registry.access.redhat.com/ubi9/ubi:latest
+        command: ["nsenter", "-t", "1", "-m", "-u", "-i", "-n", "sleep", "infinity"]
+        securityContext:
+          privileged: true`,
+
+      compliant: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: modern-payment-api
+  namespace: prod-workloads
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: modern-payment
+  template:
+    metadata:
+      labels:
+        app: modern-payment
+    spec:
+      serviceAccountName: default
+      containers:
+      - name: api
+        image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+        ports:
+        - containerPort: 8080
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - NET_BIND_SERVICE`
+    };
+
+    const state = {
+      parsedYaml: null,
+      rawYaml: '',
+      violations: [],
+      mutations: [],
+      matchedScc: null,
+      admitted: false,
+      clusterSccs: {
+        'restricted-v2': true,
+        'nonroot-v2': false,
+        'hostnetwork-v2': false,
+        'anyuid': false,
+        'privileged': false
+      }
+    };
+
+    const el = {
+      yamlEditor: document.getElementById('yamlEditor'),
+      gutter: document.getElementById('gutter'),
+      detectedKind: document.getElementById('detectedKind'),
+      containerCount: document.getElementById('containerCount'),
+      verdictCard: document.getElementById('verdictCard'),
+      verdictTitle: document.getElementById('verdictTitle'),
+      verdictSubtitle: document.getElementById('verdictSubtitle'),
+      verdictIconContainer: document.getElementById('verdictIconContainer'),
+      matchedSccPill: document.getElementById('matchedSccPill'),
+      violationsContainer: document.getElementById('violationsContainer'),
+      mutationsContainer: document.getElementById('mutationsContainer'),
+      violationCountBadge: document.getElementById('violationCountBadge'),
+      mutationCountBadge: document.getElementById('mutationCountBadge'),
+      clusterDrawer: document.getElementById('clusterDrawer'),
+      toggleClusterDrawerBtn: document.getElementById('toggleClusterDrawerBtn'),
+      closeDrawerBtn: document.getElementById('closeDrawerBtn'),
+      activeSccCountBadge: document.getElementById('activeSccCountBadge'),
+      ctxNamespace: document.getElementById('ctxNamespace'),
+      ctxServiceAccount: document.getElementById('ctxServiceAccount'),
+      ctxUidRange: document.getElementById('ctxUidRange'),
+      ctxMcsCategory: document.getElementById('ctxMcsCategory'),
+      uidRangeHint: document.getElementById('uidRangeHint'),
+      cliGrantCmd: document.getElementById('cliGrantCmd'),
+      yamlRoleBindingSnippet: document.getElementById('yamlRoleBindingSnippet'),
+      validateBtn: document.getElementById('validateBtn'),
+      autoFixBtn: document.getElementById('autoFixBtn'),
+      copyYamlBtn: document.getElementById('copyYamlBtn')
+    };
+
+    const SCC_DEFINITIONS = {
+      'restricted-v2': {
+        priority: 0,
+        allowPrivileged: false,
+        allowHostNetwork: false,
+        allowHostPID: false,
+        allowHostIPC: false,
+        allowHostPorts: false,
+        allowHostDirVolume: false,
+        allowedCapabilities: ['NET_BIND_SERVICE'],
+        requiredDropCapabilities: ['ALL'],
+        allowPrivilegeEscalation: false,
+        runAsUser: 'MustRunAsRange',
+        seLinuxContext: 'MustRunAs',
+        seccompProfiles: ['runtime/default']
+      },
+      'nonroot-v2': {
+        priority: 0,
+        allowPrivileged: false,
+        allowHostNetwork: false,
+        allowHostPID: false,
+        allowHostIPC: false,
+        allowHostPorts: false,
+        allowHostDirVolume: false,
+        allowedCapabilities: ['NET_BIND_SERVICE'],
+        requiredDropCapabilities: ['ALL'],
+        allowPrivilegeEscalation: false,
+        runAsUser: 'MustRunAsNonRoot',
+        seLinuxContext: 'MustRunAs',
+        seccompProfiles: ['runtime/default']
+      },
+      'hostnetwork-v2': {
+        priority: 0,
+        allowPrivileged: false,
+        allowHostNetwork: true,
+        allowHostPID: false,
+        allowHostIPC: false,
+        allowHostPorts: true,
+        allowHostDirVolume: false,
+        allowedCapabilities: ['NET_BIND_SERVICE'],
+        requiredDropCapabilities: ['ALL'],
+        allowPrivilegeEscalation: false,
+        runAsUser: 'MustRunAsRange',
+        seLinuxContext: 'MustRunAs',
+        seccompProfiles: ['runtime/default']
+      },
+      'anyuid': {
+        priority: 10,
+        allowPrivileged: false,
+        allowHostNetwork: false,
+        allowHostPID: false,
+        allowHostIPC: false,
+        allowHostPorts: false,
+        allowHostDirVolume: false,
+        allowedCapabilities: [],
+        requiredDropCapabilities: ['MKNOD'],
+        allowPrivilegeEscalation: true,
+        runAsUser: 'RunAsAny',
+        seLinuxContext: 'MustRunAs',
+        seccompProfiles: ['*']
+      },
+      'privileged': {
+        priority: 20,
+        allowPrivileged: true,
+        allowHostNetwork: true,
+        allowHostPID: true,
+        allowHostIPC: true,
+        allowHostPorts: true,
+        allowHostDirVolume: true,
+        allowedCapabilities: ['*'],
+        requiredDropCapabilities: [],
+        allowPrivilegeEscalation: true,
+        runAsUser: 'RunAsAny',
+        seLinuxContext: 'RunAsAny',
+        seccompProfiles: ['*']
+      }
+    };
+
+    function parseUidRange(rangeStr) {
+      if (!rangeStr || !rangeStr.includes('/')) return { min: 1000670000, max: 1000679999, size: 10000 };
+      const parts = rangeStr.trim().split('/');
+      const min = parseInt(parts[0], 10);
+      const size = parseInt(parts[1], 10);
+      return {
+        min: isNaN(min) ? 1000670000 : min,
+        max: isNaN(min) || isNaN(size) ? 1000679999 : min + size - 1,
+        size: isNaN(size) ? 10000 : size
+      };
+    }
+
+    function updateUidHint() {
+      const range = parseUidRange(el.ctxUidRange.value);
+      el.uidRangeHint.textContent = `Valid UIDs: ${range.min} - ${range.max}`;
+    }
+
+    function updateGutter() {
+      const lines = el.yamlEditor.value.split('\n').length;
+      let gutterText = '';
+      for (let i = 1; i <= Math.max(lines, 1); i++) {
+        gutterText += i + '\n';
+      }
+      el.gutter.textContent = gutterText;
+    }
+
+    function extractPodSpec(doc) {
+      if (!doc || typeof doc !== 'object') return null;
+      if (doc.kind === 'Pod') return { spec: doc.spec || {}, root: doc };
+      if (['Deployment', 'StatefulSet', 'DaemonSet', 'Job'].includes(doc.kind)) {
+        return { spec: doc.spec?.template?.spec || {}, root: doc };
+      }
+      if (doc.kind === 'CronJob') {
+        return { spec: doc.spec?.jobTemplate?.spec?.template?.spec || {}, root: doc };
+      }
+      // Fallback: check if doc has containers directly
+      if (doc.spec?.containers) return { spec: doc.spec, root: doc };
+      if (doc.containers) return { spec: doc, root: doc };
+      return null;
+    }
+
+    function evaluateSccAdmission() {
+      state.violations = [];
+      state.mutations = [];
+      state.matchedScc = null;
+      state.admitted = false;
+
+      const rawYaml = el.yamlEditor.value;
+      state.rawYaml = rawYaml;
+
+      let doc;
+      try {
+        doc = js-yaml.load(rawYaml);
+      } catch (err) {
+        showParseError(err.message);
+        return;
+      }
+
+      if (!doc || typeof doc !== 'object') {
+        showEmptyState();
+        return;
+      }
+
+      const extracted = extractPodSpec(doc);
+      if (!extracted) {
+        showInvalidObjectError(doc.kind || 'Unknown');
+        return;
+      }
+
+      el.detectedKind.textContent = `Kind: ${doc.kind || 'Pod'}`;
+      const podSpec = extracted.spec;
+      const containers = [
+        ...(podSpec.containers || []),
+        ...(podSpec.initContainers || [])
+      ];
+      el.containerCount.textContent = `Containers: ${containers.length}`;
+
+      const nsUidRange = parseUidRange(el.ctxUidRange.value);
+      const mcsLevel = el.ctxMcsCategory.value.trim() || 's0:c26,c10';
+
+      // Find which active SCCs are granted to this ServiceAccount
+      const availableSccs = Object.keys(state.clusterSccs).filter(scc => state.clusterSccs[scc]);
+
+      // OpenShift order of testing: Most restrictive first for priority 0, then higher priority
+      // Canonical order: restricted-v2 -> nonroot-v2 -> hostnetwork-v2 -> anyuid -> privileged
+      const evaluationOrder = ['restricted-v2', 'nonroot-v2', 'hostnetwork-v2', 'anyuid', 'privileged']
+        .filter(name => availableSccs.includes(name));
+
+      let winningScc = null;
+      let evaluatedReports = [];
+
+      for (const sccName of evaluationOrder) {
+        const sccDef = SCC_DEFINITIONS[sccName];
+        const report = testPodAgainstScc(podSpec, containers, sccDef, sccName, nsUidRange, mcsLevel);
+        evaluatedReports.push(report);
+
+        if (report.passed) {
+          winningScc = sccName;
+          state.mutations = report.mutations;
+          break;
+        }
+      }
+
+      if (winningScc) {
+        state.matchedScc = winningScc;
+        state.admitted = true;
+        state.violations = []; // No blocking errors for the winning match
+        renderAdmissionSuccess(winningScc, state.mutations);
+      } else {
+        state.admitted = false;
+        state.matchedScc = null;
+        // Collect violations from the primary desired baseline (restricted-v2) or most common
+        const primaryReport = evaluatedReports.find(r => r.sccName === 'restricted-v2') || evaluatedReports[0] || { violations: [] };
+        state.violations = primaryReport.violations;
+        renderAdmissionFailure(evaluatedReports);
+      }
+
+      updateRbacSnippets();
+    }
+
+    function testPodAgainstScc(podSpec, containers, scc, sccName, uidRange, mcsLevel) {
+      const violations = [];
+      const mutations = [];
+
+      // 1. Host Network
+      if (podSpec.hostNetwork && !scc.allowHostNetwork) {
+        violations.push({
+          field: 'spec.hostNetwork',
+          val: 'true',
+          reason: `SCC '${sccName}' forbids hostNetwork access.`,
+          fix: 'Remove hostNetwork: true or grant the hostnetwork-v2 or privileged SCC.',
+          requiredScc: 'hostnetwork-v2'
+        });
+      }
+
+      // 2. Host PID
+      if (podSpec.hostPID && !scc.allowHostPID) {
+        violations.push({
+          field: 'spec.hostPID',
+          val: 'true',
+          reason: `SCC '${sccName}' strictly forbids sharing the host PID namespace.`,
+          fix: 'Remove hostPID: true or bind the privileged SCC to your ServiceAccount.',
+          requiredScc: 'privileged'
+        });
+      }
+
+      // 3. Host IPC
+      if (podSpec.hostIPC && !scc.allowHostIPC) {
+        violations.push({
+          field: 'spec.hostIPC',
+          val: 'true',
+          reason: `SCC '${sccName}' forbids host IPC sharing.`,
+          fix: 'Remove hostIPC: true or bind privileged SCC.',
+          requiredScc: 'privileged'
+        });
+      }
+
+      // 4. Volumes (hostPath check)
+      const volumes = podSpec.volumes || [];
+      for (const vol of volumes) {
+        if (vol.hostPath && !scc.allowHostDirVolume) {
+          violations.push({
+            field: `spec.volumes[name=${vol.name}].hostPath`,
+            val: vol.hostPath.path || 'path',
+            reason: `HostPath volume mounts are forbidden by '${sccName}' because they allow arbitrary host filesystem access.`,
+            fix: 'Switch to a PersistentVolumeClaim (PVC) or emptyDir, or request privileged / hostmount-anyuid SCC.',
+            requiredScc: 'privileged'
+          });
+        }
+      }
+
+      // 5. Container-level Security Context checks
+      containers.forEach((c, idx) => {
+        const cName = c.name || `container-${idx}`;
+        const sec = c.securityContext || {};
+        const podSec = podSpec.securityContext || {};
+
+        // Privileged container
+        if (sec.privileged && !scc.allowPrivileged) {
+          violations.push({
+            field: `spec.containers[${cName}].securityContext.privileged`,
+            val: 'true',
+            reason: `Privileged containers disable all Linux security boundaries. SCC '${sccName}' denies privileged execution.`,
+            fix: 'Set privileged: false or request cluster-admin to grant privileged SCC.',
+            requiredScc: 'privileged'
+          });
+        }
+
+        // AllowPrivilegeEscalation
+        if (sec.allowPrivilegeEscalation === true && scc.allowPrivilegeEscalation === false) {
+          violations.push({
+            field: `spec.containers[${cName}].securityContext.allowPrivilegeEscalation`,
+            val: 'true',
+            reason: `'${sccName}' enforces allowPrivilegeEscalation: false to prevent suid binary exploits.`,
+            fix: 'Set allowPrivilegeEscalation: false or omit the field.',
+            requiredScc: 'anyuid'
+          });
+        }
+
+        // UID checks
+        const runAsUser = sec.runAsUser !== undefined ? sec.runAsUser : podSec.runAsUser;
+        if (runAsUser !== undefined) {
+          if (runAsUser === 0 && scc.runAsUser !== 'RunAsAny') {
+            violations.push({
+              field: `spec.containers[${cName}].securityContext.runAsUser`,
+              val: '0 (root)',
+              reason: `Container explicitly requests UID 0 (root). SCC '${sccName}' strictly requires running as an unprivileged UID.`,
+              fix: 'Remove runAsUser: 0 to let OpenShift inject an allocated range UID, or grant the anyuid SCC.',
+              requiredScc: 'anyuid'
+            });
+          } else if (scc.runAsUser === 'MustRunAsRange') {
+            if (runAsUser < uidRange.min || runAsUser > uidRange.max) {
+              violations.push({
+                field: `spec.containers[${cName}].securityContext.runAsUser`,
+                val: `${runAsUser}`,
+                reason: `Requested UID ${runAsUser} is outside target namespace allocated range [${uidRange.min} - ${uidRange.max}].`,
+                fix: `Remove runAsUser (OpenShift will auto-assign ${uidRange.min}) or use a UID within range.`,
+                requiredScc: 'anyuid'
+              });
+            }
+          } else if (scc.runAsUser === 'MustRunAsNonRoot') {
+            if (runAsUser === 0) {
+              violations.push({
+                field: `spec.containers[${cName}].securityContext.runAsUser`,
+                val: '0',
+                reason: `nonroot-v2 requires non-zero UID.`,
+                fix: 'Specify a non-root UID (e.g. 1001) or remove.',
+                requiredScc: 'anyuid'
+              });
+            }
+          }
+        } else {
+          // If omitted and SCC is MustRunAsRange, it will be mutated!
+          if (scc.runAsUser === 'MustRunAsRange') {
+            mutations.push({
+              field: `spec.containers[${cName}].securityContext.runAsUser`,
+              injectedValue: `${uidRange.min}`,
+              source: `Namespace UID range block (${uidRange.min}/${uidRange.size})`
+            });
+          }
+        }
+
+        // Capabilities
+        const caps = sec.capabilities || {};
+        const addedCaps = caps.add || [];
+        const droppedCaps = caps.drop || [];
+
+        if (scc.allowedCapabilities[0] !== '*') {
+          for (const cap of addedCaps) {
+            if (!scc.allowedCapabilities.includes(cap)) {
+              violations.push({
+                field: `spec.containers[${cName}].securityContext.capabilities.add`,
+                val: `[${cap}]`,
+                reason: `Capability '${cap}' is forbidden by SCC '${sccName}'. Only allowed: ${scc.allowedCapabilities.join(', ') || 'none'}.`,
+                fix: `Remove capability '${cap}', or configure a custom SCC / privileged access.`,
+                requiredScc: 'privileged'
+              });
+            }
+          }
+        }
+
+        // Mutated capabilities
+        if (sccName === 'restricted-v2') {
+          if (!droppedCaps.includes('ALL')) {
+            mutations.push({
+              field: `spec.containers[${cName}].securityContext.capabilities.drop`,
+              injectedValue: `["ALL"]`,
+              source: `restricted-v2 baseline requirement`
+            });
+          }
+          if (!addedCaps.includes('NET_BIND_SERVICE')) {
+            mutations.push({
+              field: `spec.containers[${cName}].securityContext.capabilities.add`,
+              injectedValue: `["NET_BIND_SERVICE"]`,
+              source: `restricted-v2 convenience default`
+            });
+          }
+        }
+
+        // Escalation mutation
+        if (sec.allowPrivilegeEscalation === undefined && scc.allowPrivilegeEscalation === false) {
+          mutations.push({
+            field: `spec.containers[${cName}].securityContext.allowPrivilegeEscalation`,
+            injectedValue: `false`,
+            source: `${sccName} enforcement`
+          });
+        }
+      });
+
+      // SELinux mutation
+      if (!podSpec.securityContext?.seLinuxOptions?.level && scc.seLinuxContext === 'MustRunAs') {
+        mutations.push({
+          field: `spec.securityContext.seLinuxOptions.level`,
+          injectedValue: `"${mcsLevel}"`,
+          source: `Namespace MCS annotation (openshift.io/sa.scc.mcs)`
+        });
+      }
+
+      // Seccomp mutation
+      if (!podSpec.securityContext?.seccompProfile && scc.seccompProfiles.includes('runtime/default')) {
+        mutations.push({
+          field: `spec.securityContext.seccompProfile.type`,
+          injectedValue: `"RuntimeDefault"`,
+          source: `${sccName} standard`
+        });
+      }
+
+      // Audit annotation mutation
+      mutations.push({
+        field: `metadata.annotations["openshift.io/scc"]`,
+        injectedValue: `"${sccName}"`,
+        source: `OpenShift admission tracker`
+      });
+
+      return {
+        sccName,
+        passed: violations.length === 0,
+        violations,
+        mutations
+      };
+    }
+
+    function renderAdmissionSuccess(sccName, mutations) {
+      el.verdictCard.className = 'bg-[#152317] border border-emerald-600/60 rounded-lg p-5 shadow-xl badge-glow-green transition-all duration-300';
+      el.verdictTitle.innerHTML = `<span class="text-emerald-400 flex items-center gap-2"><svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg> ADMISSION ALLOWED</span>`;
+      el.verdictSubtitle.textContent = `Pod satisfies '${sccName}' constraints and will be scheduled to worker nodes.`;
+      
+      el.verdictIconContainer.className = 'p-2.5 rounded-lg bg-emerald-950 text-emerald-300 border border-emerald-700/50';
+      el.verdictIconContainer.innerHTML = `<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>`;
+
+      el.matchedSccPill.className = 'px-3 py-1 rounded bg-emerald-900/60 text-emerald-200 border border-emerald-600 font-mono font-bold text-xs';
+      el.matchedSccPill.textContent = sccName;
+
+      el.violationCountBadge.textContent = '0';
+      el.mutationCountBadge.textContent = `${mutations.length}`;
+
+      el.violationsContainer.innerHTML = `
+        <div class="p-4 rounded-md bg-emerald-950/30 border border-emerald-800/40 text-emerald-300 text-xs">
+          <div class="font-bold flex items-center space-x-1.5 mb-1">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+            <span>No SCC Admission Blockers</span>
+          </div>
+          This workload definition conforms to the policies of <strong class="text-white">${sccName}</strong>. 
+          Check the <strong>Mutations by SCC</strong> tab to view values OpenShift automatically populates prior to storage in etcd.
+        </div>
+      `;
+
+      renderMutations(mutations);
+    }
+
+    function renderAdmissionFailure(reports) {
+      el.verdictCard.className = 'bg-[#261517] border border-red-600/70 rounded-lg p-5 shadow-xl badge-glow transition-all duration-300';
+      el.verdictTitle.innerHTML = `<span class="text-red-400 flex items-center gap-2"><svg class="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path></svg> ADMISSION FORBIDDEN</span>`;
+      el.verdictSubtitle.textContent = `Unable to validate against any granted Security Context Constraint.`;
+
+      el.verdictIconContainer.className = 'p-2.5 rounded-lg bg-red-950 text-red-400 border border-red-800/50';
+      el.verdictIconContainer.innerHTML = `<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>`;
+
+      el.matchedSccPill.className = 'px-3 py-1 rounded bg-red-950 text-red-300 border border-red-800 font-mono text-xs';
+      el.matchedSccPill.textContent = 'None Matched';
+
+      el.violationCountBadge.textContent = `${state.violations.length}`;
+      el.mutationCountBadge.textContent = '0';
+
+      let html = '';
+      state.violations.forEach((v, i) => {
+        html += `
+          <div class="p-3.5 rounded-md bg-[#1B1718] border border-red-900/50 text-xs space-y-2">
+            <div class="flex items-start justify-between gap-2">
+              <span class="font-mono text-red-400 font-semibold text-[11px] break-all">${v.field}</span>
+              <span class="px-1.5 py-0.5 rounded bg-red-950 text-red-300 border border-red-800 text-[10px] font-mono whitespace-nowrap">Value: ${v.val}</span>
+            </div>
+            <p class="text-gray-300 text-xs">${v.reason}</p>
+            <div class="bg-[#121011] p-2.5 rounded border border-rh-border flex items-start space-x-2 text-[11px]">
+              <span class="text-emerald-400 font-bold">Fix:</span>
+              <span class="text-gray-300">${v.fix}</span>
+            </div>
+          </div>
+        `;
+      });
+
+      el.violationsContainer.innerHTML = html;
+      el.mutationsContainer.innerHTML = `<div class="text-gray-500 text-center py-4">No mutations applied (Pod was rejected at admission).</div>`;
+      
+      // Auto-switch to violations tab
+      switchTab('violations');
+    }
+
+    function renderMutations(mutations) {
+      if (!mutations.length) {
+        el.mutationsContainer.innerHTML = `<div class="text-gray-500 text-center py-4">No mutations necessary.</div>`;
+        return;
+      }
+
+      let html = '';
+      mutations.forEach(m => {
+        html += `
+          <div class="p-2.5 rounded bg-[#161618] border border-rh-border flex flex-col space-y-1">
+            <div class="flex items-center justify-between text-gray-300">
+              <span class="text-emerald-400 text-[11px] font-mono">${m.field}</span>
+              <span class="text-[10px] text-rh-muted">${m.source}</span>
+            </div>
+            <div class="text-white text-xs bg-black/60 px-2 py-1 rounded border border-gray-800">
+              ${m.injectedValue}
+            </div>
+          </div>
+        `;
+      });
+      el.mutationsContainer.innerHTML = html;
+    }
+
+    function showParseError(msg) {
+      el.verdictCard.className = 'bg-[#231E15] border border-amber-600/70 rounded-lg p-5 shadow-xl';
+      el.verdictTitle.innerHTML = `<span class="text-amber-400">YAML SYNTAX ERROR</span>`;
+      el.verdictSubtitle.textContent = msg;
+      el.matchedSccPill.textContent = 'Parse Error';
+      el.violationsContainer.innerHTML = `<div class="p-3 bg-amber-950/40 border border-amber-800 text-amber-200 text-xs rounded">${msg}</div>`;
+      el.violationCountBadge.textContent = '!';
+    }
+
+    function showInvalidObjectError(kind) {
+      el.verdictCard.className = 'bg-[#1F1F24] border border-gray-600 rounded-lg p-5 shadow-xl';
+      el.verdictTitle.innerHTML = `<span class="text-gray-300">NON-WORKLOAD OBJECT</span>`;
+      el.verdictSubtitle.textContent = `Kind '${kind}' does not declare a Pod template. Provide a Pod, Deployment, StatefulSet, or DaemonSet.`;
+      el.matchedSccPill.textContent = 'N/A';
+      el.violationsContainer.innerHTML = `<div class="text-gray-400 text-xs p-3">Please input a resource specifying containers and securityContext.</div>`;
+    }
+
+    function showEmptyState() {
+      el.verdictCard.className = 'bg-rh-dark border border-rh-border rounded-lg p-5 shadow-xl';
+      el.verdictTitle.innerHTML = `<span class="text-gray-400">AWAITING SPECIFICATION</span>`;
+      el.verdictSubtitle.textContent = 'Paste a Kubernetes or OpenShift manifest to evaluate.';
+      el.matchedSccPill.textContent = 'Waiting';
+      el.violationsContainer.innerHTML = '';
+      el.mutationsContainer.innerHTML = '';
+    }
+
+    function autoFixYaml() {
+      let doc;
+      try {
+        doc = js-yaml.load(el.yamlEditor.value);
+      } catch (e) {
+        return;
+      }
+      if (!doc) return;
+
+      const extracted = extractPodSpec(doc);
+      if (!extracted) return;
+
+      const podSpec = extracted.spec;
+
+      // 1. Remove host-level namespace leaks
+      delete podSpec.hostNetwork;
+      delete podSpec.hostPID;
+      delete podSpec.hostIPC;
+
+      // 2. Fix HostPath volumes
+      if (podSpec.volumes && Array.isArray(podSpec.volumes)) {
+        podSpec.volumes.forEach(v => {
+          if (v.hostPath) {
+            delete v.hostPath;
+            v.emptyDir = {};
+          }
+        });
+      }
+
+      // 3. Clean pod-level security context
+      if (podSpec.securityContext) {
+        delete podSpec.securityContext.runAsUser;
+      }
+
+      // 4. Sanitize all containers
+      const sanitizeContainer = (c) => {
+        if (!c.securityContext) c.securityContext = {};
+        delete c.securityContext.runAsUser;
+        delete c.securityContext.privileged;
+        c.securityContext.allowPrivilegeEscalation = false;
+        c.securityContext.capabilities = {
+          drop: ['ALL'],
+          add: ['NET_BIND_SERVICE']
+        };
+      };
+
+      if (podSpec.containers) podSpec.containers.forEach(sanitizeContainer);
+      if (podSpec.initContainers) podSpec.initContainers.forEach(sanitizeContainer);
+
+      // Serialize back to YAML
+      const newYaml = js-yaml.dump(doc, { indent: 2, lineWidth: -1 });
+      el.yamlEditor.value = newYaml;
+      updateGutter();
+      evaluateSccAdmission();
+    }
+
+    function updateRbacSnippets() {
+      const ns = el.ctxNamespace.value.trim() || 'prod-workloads';
+      const sa = el.ctxServiceAccount.value.trim() || 'default';
+      const targetScc = state.violations[0]?.requiredScc || 'anyuid';
+
+      el.cliGrantCmd.textContent = `oc adm policy add-scc-to-user ${targetScc} -z ${sa} -n ${ns}`;
+
+      el.yamlRoleBindingSnippet.textContent = `apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: system:openshift:scc:${targetScc}
+  namespace: ${ns}
+subjects:
+- kind: ServiceAccount
+  name: ${sa}
+  namespace: ${ns}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:${targetScc}`;
+    }
+
+    function switchTab(tab) {
+      const tabs = ['violations', 'mutations', 'rbac'];
+      tabs.forEach(t => {
+        const btn = document.getElementById(`tab${t.charAt(0).toUpperCase() + t.slice(1)}Btn`);
+        const content = document.getElementById(`tab${t.charAt(0).toUpperCase() + t.slice(1)}Content`);
+        if (t === tab) {
+          btn.className = 'px-3 py-2 text-xs font-semibold rounded-t-md border-b-2 border-rh-red text-white bg-rh-dark transition';
+          content.classList.remove('hidden');
+        } else {
+          btn.className = 'px-3 py-2 text-xs font-semibold rounded-t-md border-b-2 border-transparent text-gray-400 hover:text-white transition';
+          content.classList.add('hidden');
+        }
+      });
+    }
+
+    function copySnippet(elementId) {
+      const node = document.getElementById(elementId);
+      if (!node) return;
+      const text = node.innerText || node.textContent;
+      const temp = document.createElement('textarea');
+      temp.value = text;
+      document.body.appendChild(temp);
+      temp.select();
+      document.execCommand('copy');
+      document.body.removeChild(temp);
+    }
+
+    window.onload = function() {
+      // Load default compliant or root preset
+      el.yamlEditor.value = PRESETS.root;
+      updateGutter();
+      updateUidHint();
+
+      // Preset buttons
+      document.querySelectorAll('.preset-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const p = e.target.getAttribute('data-preset');
+          if (PRESETS[p]) {
+            el.yamlEditor.value = PRESETS[p];
+            updateGutter();
+            evaluateSccAdmission();
+          }
+        });
+      });
+
+      // Editor input sync
+      el.yamlEditor.addEventListener('input', () => {
+        updateGutter();
+        evaluateSccAdmission();
+      });
+
+      el.yamlEditor.addEventListener('scroll', () => {
+        el.gutter.scrollTop = el.yamlEditor.scrollTop;
+      });
+
+      // Cluster Drawer toggle
+      el.toggleClusterDrawerBtn.addEventListener('click', () => {
+        el.clusterDrawer.classList.toggle('hidden');
+      });
+      el.closeDrawerBtn.addEventListener('click', () => {
+        el.clusterDrawer.classList.add('hidden');
+      });
+
+      // Namespace / SA input bindings
+      [el.ctxNamespace, el.ctxServiceAccount, el.ctxUidRange, el.ctxMcsCategory].forEach(input => {
+        input.addEventListener('input', () => {
+          updateUidHint();
+          evaluateSccAdmission();
+        });
+      });
+
+      // Available SCC Checkboxes
+      ['restricted_v2', 'nonroot_v2', 'hostnetwork_v2', 'anyuid', 'privileged'].forEach(id => {
+        const checkbox = document.getElementById(`scc_${id}`);
+        checkbox.addEventListener('change', (e) => {
+          const key = id.replace('_', '-');
+          state.clusterSccs[key] = e.target.checked;
+          const activeCount = Object.values(state.clusterSccs).filter(Boolean).length;
+          el.activeSccCountBadge.textContent = `${activeCount} SCCs`;
+          evaluateSccAdmission();
+        });
+      });
+
+      // Action buttons
+      el.validateBtn.addEventListener('click', evaluateSccAdmission);
+      el.autoFixBtn.addEventListener('click', autoFixYaml);
+      el.copyYamlBtn.addEventListener('click', () => {
+        const temp = document.createElement('textarea');
+        temp.value = el.yamlEditor.value;
+        document.body.appendChild(temp);
+        temp.select();
+        document.execCommand('copy');
+        document.body.removeChild(temp);
+        el.copyYamlBtn.innerHTML = `<span>Copied!</span>`;
+        setTimeout(() => {
+          el.copyYamlBtn.innerHTML = `
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+            <span>Copy YAML</span>
+          `;
+        }, 1800);
+      });
+
+      // Tab buttons
+      document.getElementById('tabViolationsBtn').addEventListener('click', () => switchTab('violations'));
+      document.getElementById('tabMutationsBtn').addEventListener('click', () => switchTab('mutations'));
+      document.getElementById('tabRbacBtn').addEventListener('click', () => switchTab('rbac'));
+
+      // Initial execution
+      evaluateSccAdmission();
+    };
+  </script>
+</body>
+</html>
