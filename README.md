@@ -28,7 +28,7 @@ Use this tool when you need to **reason about SCC admission without burning clus
 **Not the right tool when**
 
 - You need a definitive cluster answer → use `oc create --dry-run=server` / `oc adm policy scc-subject-review`
-- The deny involves a **custom SCC**, image `USER`, or Pod Security Admission (PSA) on top of SCCs
+- The deny involves image `USER` inspection, or Pod Security Admission (PSA) on top of SCCs (PSA is not simulated yet)
 - You must prove what is granted in a live project → export RoleBindings / run `oc adm policy who-can use sccs/...` (then import here if you want)
 
 This is a **teaching / diagnostics workbench**, not a replacement for the API server. Always confirm on-cluster with:
@@ -78,6 +78,9 @@ oc get rolebinding -n <ns> -o yaml > rb.yaml
 
 # ClusterRoleBindings that grant SCCs (optional)
 oc get clusterrolebinding -o name | grep ':scc:' | while read -r r; do oc get "$r" -o yaml; echo '---'; done > crb-scc.yaml
+
+# All SCC objects, including custom ones
+oc get scc -o yaml > sccs.yaml
 ```
 
 Then **Upload YAML** or paste into the box and click **Apply pasted YAML**.
@@ -87,9 +90,15 @@ Then **Upload YAML** or paste into the box and click **Apply pasted YAML**.
 | Namespace / Project | Name, `openshift.io/sa.scc.uid-range`, `openshift.io/sa.scc.mcs` |
 | RoleBinding / ClusterRoleBinding (`system:openshift:scc:*`) | SCCs available to the ServiceAccount |
 | ServiceAccount (optional) | SA name |
-| SCC `users` / `groups` (optional) | Extra grants |
+| `SecurityContextConstraints` (`oc get scc`) | **Stock + custom SCC rules** the simulator will evaluate |
 
-Custom SCCs in the export are reported but not simulated (the engine models stock SCCs only).
+If a RoleBinding grants an SCC whose YAML was not imported, the app names it and asks you to paste `oc get scc <name> -o yaml`. Custom SCCs show as extra chips; you can tick or remove them.
+
+### Custom SCCs
+
+The five stock SCCs are always available. Paste a `kind: SecurityContextConstraints` object (or `oc get scc -o yaml`) to **load its rules** into the simulator: capabilities, host namespaces, volumes, runAsUser strategy, priority, etc. The **Custom SCC** sample loads `netadmin-nonroot` (priority 5, `NET_ADMIN` / `NET_RAW`) against a packet-capture pod — `restricted-v2` fails; the custom SCC wins.
+
+This is still an approximation of admission, not `oc create --dry-run=server`.
 
 ---
 
@@ -124,6 +133,7 @@ Custom SCCs in the export are reported but not simulated (the engine models stoc
 | NFS volume | Non-trivial volume type vs restricted volumes |
 | Privileged agent | DaemonSet needing `privileged` |
 | anyuid priority | Clean pod with `restricted-v2` **and** `anyuid` checked → `anyuid` wins |
+| Custom SCC | Pod with `NET_ADMIN` + imported `netadmin-nonroot` SCC |
 | Clean microservice | Passes `restricted-v2` |
 
 ---

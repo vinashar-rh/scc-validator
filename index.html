@@ -183,6 +183,8 @@
     .preset[data-preset="uidrange"] { border-left: 3px solid #795600; }
     .preset[data-preset="anyuidwins"] { border-left: 3px solid #009596; }
     .preset[data-preset="nfs"] { border-left: 3px solid #8a8d90; }
+    .preset[data-preset="customscc"] { border-left: 3px solid #c9190b; }
+    .chip--custom { border-color: #0066cc; background: #f0f7ff; }
   </style>
 </head>
 <body class="text-ink font-sans min-h-screen flex flex-col antialiased">
@@ -223,8 +225,8 @@
           <div>
             <div class="font-semibold text-ink">Import cluster context</div>
             <p class="text-[11px] text-mute mt-1 max-w-3xl leading-relaxed">
-              Export your namespace and RoleBindings, then paste or upload them.
-              Fills UID range, MCS, and which SCCs the ServiceAccount may use.
+              Export namespace, RoleBindings, and SCC objects, then paste or upload them.
+              Fills UID range, MCS, grants, and <span class="text-ink font-medium">custom SCC definitions</span>.
             </p>
           </div>
           <div class="flex items-center gap-2 shrink-0">
@@ -244,11 +246,11 @@
           </div>
           <p class="text-[10px] text-mute mt-1.5">
             Minimum: <span class="font-mono">ns.yaml</span> + <span class="font-mono">rb.yaml</span>.
-            Add <span class="font-mono">crb-scc.yaml</span> for cluster-wide SCC grants.
+            Add <span class="font-mono">sccs.yaml</span> (<span class="font-mono">oc get scc -o yaml</span>) to simulate custom SCCs.
           </p>
         </details>
 
-        <textarea id="ctxImportEditor" spellcheck="false" rows="4" class="field resize-y" placeholder="# Paste oc get ... -o yaml here (Namespace, RoleBinding, ClusterRoleBinding — multi-doc OK)"></textarea>
+        <textarea id="ctxImportEditor" spellcheck="false" rows="4" class="field resize-y" placeholder="# Paste oc get ns|rolebinding|scc -o yaml (Namespace, RoleBinding, SecurityContextConstraints — multi-doc OK)"></textarea>
         <p id="ctxImportStatus" class="mt-2 text-[11px] text-mute min-h-[1.25rem]"></p>
       </div>
 
@@ -280,34 +282,36 @@
         <label class="block text-xs font-semibold text-ink mb-1">SCCs this ServiceAccount may use</label>
         <p class="text-[11px] text-mute mb-3 leading-relaxed max-w-5xl">
           Prefer import above, or tick manually. A new project almost always has only
-          <span class="font-mono text-ink">restricted-v2</span>. Elevated SCCs need a cluster-admin grant.
+          <span class="font-mono text-ink">restricted-v2</span>. Custom SCCs appear here after you paste
+          <span class="font-mono">oc get scc</span> YAML.
         </p>
-        <div class="flex flex-wrap items-center gap-2 text-xs">
+        <div id="sccChipRow" class="flex flex-wrap items-center gap-2 text-xs">
           <label class="chip">
-            <input type="checkbox" id="scc_restricted_v2" checked>
+            <input type="checkbox" data-scc="restricted-v2" id="scc_restricted_v2" checked>
             <span class="font-mono">restricted-v2</span>
             <span class="text-mute text-[10px]">P0</span>
           </label>
           <label class="chip">
-            <input type="checkbox" id="scc_nonroot_v2">
+            <input type="checkbox" data-scc="nonroot-v2" id="scc_nonroot_v2">
             <span class="font-mono">nonroot-v2</span>
             <span class="text-mute text-[10px]">P0</span>
           </label>
           <label class="chip">
-            <input type="checkbox" id="scc_hostnetwork_v2">
+            <input type="checkbox" data-scc="hostnetwork-v2" id="scc_hostnetwork_v2">
             <span class="font-mono">hostnetwork-v2</span>
           </label>
           <label class="chip">
-            <input type="checkbox" id="scc_anyuid">
+            <input type="checkbox" data-scc="anyuid" id="scc_anyuid">
             <span class="font-mono">anyuid</span>
             <span class="text-mute text-[10px]">P10</span>
           </label>
           <label class="chip">
-            <input type="checkbox" id="scc_privileged">
+            <input type="checkbox" data-scc="privileged" id="scc_privileged">
             <span class="font-mono">privileged</span>
             <span class="text-mute text-[10px]">unset</span>
           </label>
         </div>
+        <div id="customSccChips" class="flex flex-wrap items-center gap-2 text-xs mt-2"></div>
 
         <details class="mt-3 text-[11px] text-mute">
           <summary class="cursor-pointer text-ink select-none">Verify on a real cluster (optional)</summary>
@@ -340,6 +344,7 @@
           <button type="button" data-preset="nfs" class="preset-btn preset">NFS volume</button>
           <button type="button" data-preset="daemonset" class="preset-btn preset">Privileged agent</button>
           <button type="button" data-preset="anyuidwins" class="preset-btn preset">anyuid priority</button>
+          <button type="button" data-preset="customscc" class="preset-btn preset">Custom SCC</button>
           <button type="button" data-preset="compliant" class="preset-btn preset">Clean microservice</button>
         </div>
       </div>
@@ -668,8 +673,72 @@ spec:
           allowPrivilegeEscalation: false
           capabilities:
             drop: ["ALL"]
-            add: ["NET_BIND_SERVICE"]`
+            add: ["NET_BIND_SERVICE"]`,
+
+      customscc: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: packet-capture
+  namespace: prod-workloads
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: packet-capture
+  template:
+    metadata:
+      labels:
+        app: packet-capture
+    spec:
+      serviceAccountName: default
+      containers:
+      - name: tcpdump
+        image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+            add: ["NET_ADMIN", "NET_RAW"]`
     };
+
+    const SAMPLE_CUSTOM_SCC_YAML = `apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: netadmin-nonroot
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowedCapabilities:
+- NET_ADMIN
+- NET_RAW
+- NET_BIND_SERVICE
+defaultAddCapabilities: []
+fsGroup:
+  type: MustRunAs
+priority: 5
+readOnlyRootFilesystem: false
+requiredDropCapabilities:
+- ALL
+runAsUser:
+  type: MustRunAsRange
+seLinuxContext:
+  type: MustRunAs
+seccompProfiles:
+- runtime/default
+supplementalGroups:
+  type: MustRunAs
+volumes:
+- configMap
+- downwardAPI
+- emptyDir
+- persistentVolumeClaim
+- projected
+- secret
+`;
 
     // Optional SCC checkbox overrides when loading a sample
     const PRESET_CONTEXT = {
@@ -689,6 +758,16 @@ spec:
           'hostnetwork-v2': false,
           anyuid: false,
           privileged: false
+        }
+      },
+      customscc: {
+        clusterSccs: {
+          'restricted-v2': true,
+          'nonroot-v2': false,
+          'hostnetwork-v2': false,
+          anyuid: false,
+          privileged: false,
+          'netadmin-nonroot': true
         }
       }
     };
@@ -823,6 +902,9 @@ spec:
       }
     };
 
+    const STOCK_SCC_NAMES = Object.keys(SCC_DEFINITIONS);
+    const STOCK_SCC_DEFINITIONS = JSON.parse(JSON.stringify(SCC_DEFINITIONS));
+
     const state = {
       parsedYaml: null,
       rawYaml: '',
@@ -872,6 +954,100 @@ spec:
       };
     }
 
+    function isStockScc(name) {
+      return STOCK_SCC_NAMES.includes(name);
+    }
+
+    function strategyType(obj, fallback) {
+      if (!obj) return fallback;
+      if (typeof obj === 'string') return obj;
+      return obj.type || fallback;
+    }
+
+    function parseOpenShiftScc(doc) {
+      if (!doc || doc.kind !== 'SecurityContextConstraints') return null;
+      const name = doc.metadata?.name;
+      if (!name) return null;
+
+      let volumes = Array.isArray(doc.volumes) ? [...doc.volumes] : [];
+      if (doc.allowHostDirVolumePlugin && !volumes.includes('*') &&
+          !volumes.some((v) => String(v).toLowerCase() === 'hostpath')) {
+        volumes.push('hostPath');
+      }
+      if (!volumes.length && doc.allowPrivilegedContainer) volumes = ['*'];
+
+      let seccomp = Array.isArray(doc.seccompProfiles) ? [...doc.seccompProfiles] : [];
+      if (!seccomp.length) seccomp = ['*'];
+
+      const allowEsc = doc.allowPrivilegeEscalation !== false
+        && doc.defaultAllowPrivilegeEscalation !== false;
+
+      return {
+        name,
+        custom: !isStockScc(name),
+        priority: doc.priority == null ? 0 : Number(doc.priority) || 0,
+        allowPrivileged: !!doc.allowPrivilegedContainer,
+        allowHostNetwork: !!doc.allowHostNetwork,
+        allowHostPID: !!doc.allowHostPID,
+        allowHostIPC: !!doc.allowHostIPC,
+        allowHostPorts: !!doc.allowHostPorts,
+        allowedVolumes: volumes,
+        allowedCapabilities: Array.isArray(doc.allowedCapabilities) ? doc.allowedCapabilities : [],
+        defaultAddCapabilities: Array.isArray(doc.defaultAddCapabilities) ? doc.defaultAddCapabilities : [],
+        requiredDropCapabilities: Array.isArray(doc.requiredDropCapabilities) ? doc.requiredDropCapabilities : [],
+        allowPrivilegeEscalation: allowEsc,
+        runAsUser: strategyType(doc.runAsUser, 'MustRunAsRange'),
+        seLinuxContext: strategyType(doc.seLinuxContext, 'MustRunAs'),
+        fsGroup: strategyType(doc.fsGroup, 'MustRunAs'),
+        supplementalGroups: strategyType(doc.supplementalGroups, 'RunAsAny'),
+        seccompProfiles: seccomp,
+        users: Array.isArray(doc.users) ? doc.users : [],
+        groups: Array.isArray(doc.groups) ? doc.groups : []
+      };
+    }
+
+    function registerSccDefinition(def) {
+      if (!def || !def.name) return;
+      const { name, custom, users, groups, ...engine } = def;
+      SCC_DEFINITIONS[name] = engine;
+      if (!(name in state.clusterSccs)) state.clusterSccs[name] = false;
+    }
+
+    function customSccNames() {
+      return Object.keys(SCC_DEFINITIONS).filter((n) => !isStockScc(n));
+    }
+
+    function removeCustomScc(name) {
+      if (isStockScc(name)) return;
+      delete SCC_DEFINITIONS[name];
+      delete state.clusterSccs[name];
+      renderCustomSccChips();
+      updateSccBadge();
+      evaluateSccAdmission();
+      scheduleShareUrlSync();
+    }
+
+    function renderCustomSccChips() {
+      const host = document.getElementById('customSccChips');
+      if (!host) return;
+      const names = customSccNames().sort();
+      if (!names.length) {
+        host.innerHTML = '';
+        return;
+      }
+      host.innerHTML = names.map((name) => {
+        const def = SCC_DEFINITIONS[name];
+        const pri = def?.priority ?? 0;
+        const checked = state.clusterSccs[name] ? ' checked' : '';
+        return `<label class="chip chip--custom">
+          <input type="checkbox" data-scc="${esc(name)}"${checked}>
+          <span class="font-mono">${esc(name)}</span>
+          <span class="text-mute text-[10px]">custom · P${pri}</span>
+          <button type="button" class="text-mute hover:text-bad leading-none" data-remove-scc="${esc(name)}" title="Remove custom SCC">×</button>
+        </label>`;
+      }).join('');
+    }
+
     function volumeType(vol) {
       if (!vol || typeof vol !== 'object') return 'unknown';
       for (const key of VOLUME_KEYS) {
@@ -881,8 +1057,9 @@ spec:
     }
 
     function volumeAllowed(scc, type) {
-      if (scc.allowedVolumes.includes('*')) return true;
-      return scc.allowedVolumes.includes(type);
+      const vols = (scc.allowedVolumes || []).map((v) => String(v).toLowerCase());
+      if (vols.includes('*')) return true;
+      return vols.includes(String(type).toLowerCase());
     }
 
     function capabilitiesPointValue(scc) {
@@ -906,10 +1083,11 @@ spec:
     }
 
     function volumePointValue(scc) {
-      if (scc.allowedVolumes.includes('*') || scc.allowedVolumes.includes('hostPath')) {
+      const vols = scc.allowedVolumes || [];
+      if (vols.includes('*') || vols.map((v) => String(v).toLowerCase()).includes('hostpath')) {
         return POINTS.hostVolume;
       }
-      const hasNonTrivial = scc.allowedVolumes.some((v) => !TRIVIAL_VOLUMES.has(v));
+      const hasNonTrivial = vols.some((v) => !TRIVIAL_VOLUMES.has(String(v)));
       return hasNonTrivial ? POINTS.nonTrivialVolume : 0;
     }
 
@@ -936,7 +1114,7 @@ spec:
     }
 
     function sortSccs(names) {
-      return [...names].sort((a, b) => {
+      return [...names].filter((n) => SCC_DEFINITIONS[n]).sort((a, b) => {
         const sa = SCC_DEFINITIONS[a];
         const sb = SCC_DEFINITIONS[b];
         const pa = sa.priority ?? 0;
@@ -1011,7 +1189,7 @@ spec:
             type === 'hostPath' ? (vol.hostPath?.path || 'path') : type,
             isHost
               ? `HostPath volume mounts are forbidden by '${sccName}'.`
-              : `Volume type '${type}' is not in the allowed set for '${sccName}' (${scc.allowedVolumes.join(', ')}).`,
+              : `Volume type '${type}' is not in the allowed set for '${sccName}' (${(scc.allowedVolumes || []).join(', ') || 'none'}).`,
             isHost
               ? 'Switch to a PVC or emptyDir, or request privileged / hostmount-anyuid.'
               : `Use an allowed volume type or grant an SCC that permits '${type}'.`,
@@ -1271,13 +1449,18 @@ spec:
     }
 
     function collectShareState() {
+      const custom = {};
+      customSccNames().forEach((name) => {
+        custom[name] = SCC_DEFINITIONS[name];
+      });
       return {
         y: el.yamlEditor.value,
         n: el.ctxNamespace.value,
         a: el.ctxServiceAccount.value,
         u: el.ctxUidRange.value,
         m: el.ctxMcsCategory.value,
-        s: Object.keys(state.clusterSccs).filter((k) => state.clusterSccs[k])
+        s: Object.keys(state.clusterSccs).filter((k) => state.clusterSccs[k]),
+        c: custom
       };
     }
 
@@ -1321,10 +1504,16 @@ spec:
       if (typeof payload.a === 'string') el.ctxServiceAccount.value = payload.a;
       if (typeof payload.u === 'string') el.ctxUidRange.value = payload.u;
       if (typeof payload.m === 'string') el.ctxMcsCategory.value = payload.m;
+      if (payload.c && typeof payload.c === 'object') {
+        Object.entries(payload.c).forEach(([name, def]) => {
+          if (def && typeof def === 'object') registerSccDefinition({ ...def, name, custom: true });
+        });
+        renderCustomSccChips();
+      }
       if (Array.isArray(payload.s)) {
         Object.keys(state.clusterSccs).forEach((k) => { state.clusterSccs[k] = false; });
         payload.s.forEach((k) => {
-          if (k in state.clusterSccs) state.clusterSccs[k] = true;
+          if (k in SCC_DEFINITIONS) state.clusterSccs[k] = true;
         });
         if (!payload.s.length) state.clusterSccs['restricted-v2'] = true;
         syncSccCheckboxesFromState();
@@ -1462,6 +1651,18 @@ spec:
 
     function loadPreset(name) {
       if (!PRESETS[name]) return;
+      if (name === 'customscc') {
+        try {
+          expandDocs(loadYamlDocuments(SAMPLE_CUSTOM_SCC_YAML)).forEach((doc) => {
+            const def = parseOpenShiftScc(doc);
+            if (def) {
+              registerSccDefinition(def);
+              state.clusterSccs[def.name] = true;
+            }
+          });
+          renderCustomSccChips();
+        } catch (_) { /* ignore */ }
+      }
       el.yamlEditor.value = PRESETS[name];
       const ctx = PRESET_CONTEXT[name];
       if (ctx?.clusterSccs) {
@@ -1517,7 +1718,8 @@ spec:
 
       const nsUidRange = parseUidRange(el.ctxUidRange.value);
       const mcsLevel = el.ctxMcsCategory.value.trim() || 's0:c26,c10';
-      const availableSccs = Object.keys(state.clusterSccs).filter((scc) => state.clusterSccs[scc]);
+      const availableSccs = Object.keys(state.clusterSccs)
+        .filter((scc) => state.clusterSccs[scc] && SCC_DEFINITIONS[scc]);
 
       if (!availableSccs.length) {
         showNoSccsGranted();
@@ -1748,10 +1950,11 @@ spec:
 
     function syncSccCheckboxesFromState() {
       Object.keys(state.clusterSccs).forEach((name) => {
-        const id = `scc_${name.replaceAll('-', '_')}`;
-        const checkbox = document.getElementById(id);
-        if (checkbox) checkbox.checked = !!state.clusterSccs[name];
+        const box = document.querySelector(`input[data-scc="${CSS.escape(name)}"]`)
+          || document.getElementById(`scc_${name.replaceAll('-', '_')}`);
+        if (box) box.checked = !!state.clusterSccs[name];
       });
+      renderCustomSccChips();
       updateSccBadge();
     }
 
@@ -1837,6 +2040,8 @@ spec:
       let foundNs = false;
       let foundBinding = false;
       const granted = new Set();
+      let importedSccDefs = 0;
+      const importedCustom = [];
 
       // Prefer explicit ServiceAccount from YAML if present
       const saDocs = docs.filter((d) => d.kind === 'ServiceAccount');
@@ -1866,48 +2071,57 @@ spec:
       const sa = el.ctxServiceAccount.value.trim() || 'default';
 
       for (const doc of docs) {
-        if (doc.kind !== 'RoleBinding' && doc.kind !== 'ClusterRoleBinding') continue;
-        const scc = sccNameFromRoleRef(doc.roleRef);
-        if (!scc) continue;
-        foundBinding = true;
-        const subjects = doc.subjects || [];
-        // Also honor older SCC.users / groups if someone pasted an SCC object mixed in
-        const matches = subjects.some((s) => subjectMatchesServiceAccount(s, ns, sa));
-        if (matches) {
-          granted.add(scc);
-          notes.push(`${doc.kind}/${doc.metadata?.name || '?'} → ${scc}`);
-        }
-      }
-
-      // SCC objects may list users/groups directly (legacy / oc get scc)
-      for (const doc of docs) {
         if (doc.kind !== 'SecurityContextConstraints') continue;
-        const sccName = doc.metadata?.name;
-        if (!sccName) continue;
-        const users = doc.users || [];
-        const groups = doc.groups || [];
+        const def = parseOpenShiftScc(doc);
+        if (!def) continue;
+        registerSccDefinition(def);
+        importedSccDefs += 1;
+        if (def.custom) importedCustom.push(def.name);
+        const users = def.users || [];
+        const groups = def.groups || [];
         const userHit = users.includes(`system:serviceaccount:${ns}:${sa}`);
         const groupHit = groups.includes('system:authenticated')
           || groups.includes('system:authenticated:oauth')
           || groups.includes('system:serviceaccounts')
           || groups.includes(`system:serviceaccounts:${ns}`);
         if (userHit || groupHit) {
-          granted.add(sccName);
-          notes.push(`SCC ${sccName} users/groups`);
+          granted.add(def.name);
+          notes.push(`SCC ${def.name} users/groups`);
+        } else if (def.custom) {
+          granted.add(def.name);
+          notes.push(`custom SCC ${def.name} (ticked so you can evaluate it)`);
+        }
+      }
+
+      for (const doc of docs) {
+        if (doc.kind !== 'RoleBinding' && doc.kind !== 'ClusterRoleBinding') continue;
+        const scc = sccNameFromRoleRef(doc.roleRef);
+        if (!scc) continue;
+        foundBinding = true;
+        const subjects = doc.subjects || [];
+        const matches = subjects.some((s) => subjectMatchesServiceAccount(s, ns, sa));
+        if (matches) {
+          granted.add(scc);
+          if (!SCC_DEFINITIONS[scc]) {
+            notes.push(`${doc.kind} grants ${scc} — also paste oc get scc ${scc} -o yaml`);
+          } else {
+            notes.push(`${doc.kind}/${doc.metadata?.name || '?'} → ${scc}`);
+          }
         }
       }
 
       // OpenShift baseline: system:authenticated can use restricted-v2 even if that CRB was not exported
       granted.add('restricted-v2');
-      if (!foundBinding) {
+      if (!foundBinding && !importedCustom.length) {
         notes.push('no SCC RoleBinding matched SA — kept default restricted-v2');
       }
 
-      // Only flip checkboxes for SCCs this simulator knows
-      Object.keys(state.clusterSccs).forEach((name) => {
-        state.clusterSccs[name] = granted.has(name);
-      });
-      // Surface unknown granted SCCs in the status (custom SCCs)
+      const pasteTouchesGrants = foundBinding || importedSccDefs;
+      if (pasteTouchesGrants) {
+        Object.keys(state.clusterSccs).forEach((name) => {
+          state.clusterSccs[name] = granted.has(name);
+        });
+      }
       const unknown = [...granted].filter((n) => !SCC_DEFINITIONS[n]);
       syncSccCheckboxesFromState();
       updateUidHint();
@@ -1917,10 +2131,12 @@ spec:
       const grantedKnown = Object.keys(state.clusterSccs).filter((n) => state.clusterSccs[n]);
       let msg = `Imported ${docs.length} object(s).`;
       if (foundNs) msg += ` Namespace annotations applied.`;
+      if (importedSccDefs) msg += ` Loaded ${importedSccDefs} SCC definition(s).`;
+      if (importedCustom.length) msg += ` Custom: ${importedCustom.join(', ')}.`;
       msg += ` SCCs for ${sa}: ${grantedKnown.join(', ') || 'none'}.`;
-      if (unknown.length) msg += ` Ignored custom SCC(s) not in simulator: ${unknown.join(', ')}.`;
-      if (!foundNs && !foundBinding) {
-        setImportStatus(msg + ' Tip: include `oc get ns … -o yaml` and RoleBindings.', false);
+      if (unknown.length) msg += ` Missing definitions (paste oc get scc): ${unknown.join(', ')}.`;
+      if (!foundNs && !foundBinding && !importedSccDefs) {
+        setImportStatus(msg + ' Tip: include `oc get ns … -o yaml`, RoleBindings, and/or `oc get scc -o yaml`.', false);
       } else {
         setImportStatus(msg, true);
       }
@@ -1954,11 +2170,13 @@ oc get rolebinding -n ${ns} -o yaml > rb.yaml
 # 3) ClusterRoleBindings that grant SCCs (optional but useful)
 oc get clusterrolebinding -o name | grep ':scc:' | while read -r r; do oc get "$r" -o yaml; echo '---'; done > crb-scc.yaml
 
-# Optional: ServiceAccount + stock SCC defs
+# Optional: ServiceAccount
 oc get sa ${sa} -n ${ns} -o yaml > sa.yaml
-oc get scc restricted-v2 nonroot-v2 hostnetwork-v2 anyuid privileged -o yaml > sccs.yaml
 
-# Then upload ns.yaml + rb.yaml (+ crb-scc.yaml) above, or paste them.`;
+# 4) SCC definitions — include custom SCCs (required to simulate them)
+oc get scc -o yaml > sccs.yaml
+
+# Then upload ns.yaml + rb.yaml + sccs.yaml (and crb-scc.yaml if needed).`;
       }
       if (el.ocSccSubjectReview) {
         el.ocSccSubjectReview.textContent = `oc adm policy scc-subject-review -z ${sa} -n ${ns} -f workload.yaml`;
@@ -2013,7 +2231,8 @@ roleRef:
         'ctxServiceAccount', 'ctxUidRange', 'ctxMcsCategory', 'uidRangeHint', 'cliGrantCmd',
         'yamlRoleBindingSnippet', 'validateBtn', 'autoFixBtn', 'copyYamlBtn', 'evalOrderRow',
         'ocSccSubjectReview', 'ocSccWhoCan', 'ocContextExport', 'ctxImportEditor',
-        'ctxImportStatus', 'ctxImportFiles', 'ctxImportPasteBtn', 'shareLinkBtn'
+        'ctxImportStatus', 'ctxImportFiles', 'ctxImportPasteBtn', 'shareLinkBtn',
+        'sccChipRow', 'customSccChips'
       ].forEach((id) => { el[id] = document.getElementById(id); });
     }
 
@@ -2059,15 +2278,40 @@ roleRef:
         });
       });
 
-      ['restricted_v2', 'nonroot_v2', 'hostnetwork_v2', 'anyuid', 'privileged'].forEach((id) => {
-        const checkbox = document.getElementById(`scc_${id}`);
-        checkbox.addEventListener('change', (e) => {
-          const key = id.replaceAll('_', '-');
-          state.clusterSccs[key] = e.target.checked;
+      if (el.sccChipRow) {
+        el.sccChipRow.addEventListener('change', (e) => {
+          const box = e.target.closest('input[data-scc]');
+          if (!box) return;
+          state.clusterSccs[box.getAttribute('data-scc')] = box.checked;
           updateSccBadge();
           evaluateSccAdmission();
+          scheduleShareUrlSync();
         });
-      });
+        el.sccChipRow.addEventListener('click', (e) => {
+          const btn = e.target.closest('[data-remove-scc]');
+          if (!btn) return;
+          e.preventDefault();
+          e.stopPropagation();
+          removeCustomScc(btn.getAttribute('data-remove-scc'));
+        });
+      }
+      if (el.customSccChips) {
+        el.customSccChips.addEventListener('change', (e) => {
+          const box = e.target.closest('input[data-scc]');
+          if (!box) return;
+          state.clusterSccs[box.getAttribute('data-scc')] = box.checked;
+          updateSccBadge();
+          evaluateSccAdmission();
+          scheduleShareUrlSync();
+        });
+        el.customSccChips.addEventListener('click', (e) => {
+          const btn = e.target.closest('[data-remove-scc]');
+          if (!btn) return;
+          e.preventDefault();
+          e.stopPropagation();
+          removeCustomScc(btn.getAttribute('data-remove-scc'));
+        });
+      }
 
       if (el.ctxImportPasteBtn) {
         el.ctxImportPasteBtn.addEventListener('click', () => {
