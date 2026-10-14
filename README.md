@@ -183,6 +183,30 @@ Single-page app: `index.html`. Tailwind CSS and js-yaml load from a CDN (interne
 
 ---
 
+## Visit statistics (anonymous)
+
+GitHub Pages does not show hits on the app URL. The page sends a **privacy-friendly pageview** to [GoatCounter](https://www.goatcounter.com/):
+
+- No cookies / no fingerprinting product
+- No account login on the visitor side
+- Does **not** send pasted YAML, cluster context, or share-link hashes (path is fixed to `/scc-validator/`)
+- Typical dashboard: pageviews, rough uniques, referrers (e.g. LinkedIn vs GitHub)
+
+**Dashboard:** https://vinashar-scc.goatcounter.com
+
+**One-time setup (required):** counts stay empty until you create that site.
+
+1. Sign up at https://www.goatcounter.com/signup  
+2. Set the site code to exactly **`vinashar-scc`** (must match `index.html`)  
+3. Log in at https://vinashar-scc.goatcounter.com  
+4. Open the live app once (ad blockers often block GoatCounter — try a private window if the first hit is missing)
+
+Hits usually appear within a few seconds. Ad blockers under-count.
+
+If `vinashar-scc` is taken, create another code and change both the script URL in `index.html` and this README.
+
+---
+
 ## License / trademark note
 
 MIT License — see [LICENSE](LICENSE).
