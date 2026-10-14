@@ -1,6 +1,12 @@
 # SCC Validator
 
+**Paste a pod YAML and see why OpenShift rejects it — in your browser, no cluster login required.**
+
 Client-side OpenShift **Security Context Constraint (SCC)** admission simulator.
+
+![SCC Validator showing an admission forbidden result for a failing workload](docs/scc-validator.png)
+
+Live app: https://vinashar-rh.github.io/scc-validator/
 
 Paste a workload YAML, set (or import) the project / ServiceAccount context, and see:
 
@@ -9,8 +15,6 @@ Paste a workload YAML, set (or import) the project / ServiceAccount context, and
 - **why other granted SCCs failed**
 - **mutations** the winning SCC would inject
 - a ready-to-copy **RBAC grant** if you need a higher SCC
-
-Live app: https://vinashar-rh.github.io/scc-validator/
 
 ## When to use it
 
@@ -21,7 +25,7 @@ Use this tool when you need to **reason about SCC admission without burning clus
 - A pod / Deployment is rejected with `unable to validate against any security context constraint` and you want a clear field-level why
 - You are deciding whether to **fix the workload** for `restricted-v2` or ask for a higher SCC (`anyuid`, `hostnetwork-v2`, `privileged`)
 - Training / demos: show how UID 0, HostPath, `hostPort`, and privileged DaemonSets fail under a normal project
-- Reviewing a PR manifest offline (laptop, no `oc` login) before applying it
+- Reviewing a PR manifest on a laptop without `oc` login (needs internet for CDN assets — see below)
 - Checking what OpenShift would **mutate** (injected UID, seccomp, `openshift.io/scc`, etc.) if admission succeeded
 - Sharing a failing case with a teammate via **Copy share link**
 
@@ -38,7 +42,7 @@ oc create --dry-run=server -f workload.yaml
 oc adm policy scc-subject-review -z <sa> -n <ns> -f workload.yaml
 ```
 
-Nothing you paste or upload is sent to a server. Evaluation runs in the browser.
+Workload YAML and cluster context stay in the browser. Evaluation does not upload them to a backend. The page does load Tailwind CSS and js-yaml from a CDN, so the first load needs internet.
 
 ---
 
@@ -145,6 +149,7 @@ This is still an approximation of admission, not `oc create --dry-run=server`.
 - workload YAML  
 - namespace, ServiceAccount, UID range, MCS  
 - which SCCs are checked  
+- imported custom SCC definitions (when present)
 
 Anyone opening that link restores the same case. The hash also updates quietly as you edit, so a bookmarked tab stays useful.
 
@@ -154,11 +159,13 @@ Large YAML is gzip-compressed in the hash when the browser supports `Compression
 
 ## What the simulator covers
 
-Stock SCCs: `restricted-v2`, `nonroot-v2`, `hostnetwork-v2`, `anyuid`, `privileged`.
+**Stock SCCs always available:** `restricted-v2`, `nonroot-v2`, `hostnetwork-v2`, `anyuid`, `privileged`.
+
+**Custom SCCs:** supported when you paste or upload `kind: SecurityContextConstraints` YAML (`oc get scc`). Their capabilities, volumes, host flags, runAsUser strategy, priority, and related fields are loaded into the same evaluator.
 
 Checks include (among others): hostNetwork / hostPID / hostIPC, hostPort, volume types, privileged, capabilities, `allowPrivilegeEscalation`, runAsUser / MustRunAsRange / MustRunAsNonRoot, fsGroup range, SELinux MCS, seccomp, and typical mutations.
 
-It does **not** fully reimplement OpenShift admission (no live image USER inspection, no custom SCC catalog, no PSA layer, no sysctl matrix, etc.). Treat on-cluster dry-run as source of truth.
+It does **not** fully reimplement OpenShift admission. Still missing or approximate: live image `USER` inspection, Pod Security Admission (PSA), full sysctl / flexVolume matrices, and some edge-case SCC fields. Treat on-cluster dry-run as source of truth.
 
 ---
 
@@ -172,10 +179,12 @@ python3 -m http.server 8080
 # open http://localhost:8080
 ```
 
-Single file app: `index.html` (Tailwind + js-yaml from CDN).
+Single-page app: `index.html`. Tailwind CSS and js-yaml load from a CDN (internet required unless you vendor them).
 
 ---
 
 ## License / trademark note
 
-Personal diagnostic tool. Not an official Red Hat product. OpenShift® is a trademark of Red Hat, Inc.
+MIT License — see [LICENSE](LICENSE).
+
+Personal diagnostic tool. Not an official Red Hat product. OpenShift® is a trademark of Red Hat, Inc. If you work at Red Hat (or elsewhere), confirm your employer’s policy before wide promotion or use of trademarks in marketing.
