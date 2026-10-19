@@ -451,6 +451,27 @@
           </div>
         </div>
         <div id="evalOrderRow" class="mt-2 text-[10px] text-mute font-mono leading-relaxed"></div>
+        <div id="psaHint" class="mt-2 text-[11px] text-mute leading-relaxed hidden"></div>
+      </div>
+
+      <div class="surface p-3">
+        <details id="ocErrorDetails">
+          <summary class="cursor-pointer text-xs font-heading font-bold text-ink select-none">
+            Paste cluster error
+            <span class="font-normal text-mute font-sans"> — map <span class="font-mono">oc</span> / PSA deny text to fields</span>
+          </summary>
+          <p class="text-[11px] text-mute mt-2 leading-relaxed">
+            Paste the Forbidden message from
+            <span class="font-mono text-ink">oc create --dry-run=server</span>
+            or the API. Detects SCC vs PSA, sets enforce when needed, jumps to matching YAML lines.
+          </p>
+          <textarea id="ocErrorEditor" spellcheck="false" rows="3" class="field resize-y mt-2" placeholder='Error from server (Forbidden): … unable to validate against any security context constraint…&#10;or: violates PodSecurity "restricted:latest": allowPrivilegeEscalation != false (container "web" …)'></textarea>
+          <div class="mt-2 flex flex-wrap items-center gap-2">
+            <button id="ocErrorParseBtn" type="button" class="btn btn-primary text-xs">Parse error</button>
+            <button id="ocErrorClearBtn" type="button" class="btn btn-quiet text-xs">Clear</button>
+            <span id="ocErrorStatus" class="text-[11px] text-mute"></span>
+          </div>
+        </details>
       </div>
 
       <div class="flex-1 surface flex flex-col overflow-hidden min-h-[400px]">
@@ -1841,9 +1862,36 @@ volumes:
 
     function updateSccBadge() {
       const n = Object.values(state.clusterSccs).filter(Boolean).length;
-      const psa = state.psa?.enforce || readPsaFromUi().enforce;
-      const psaBit = psa ? ` · PSA ${psa}` : '';
+      const psa = (state.psa?.enforce !== undefined ? state.psa.enforce : null) ?? readPsaFromUi().enforce;
+      const psaBit = psa ? ` · PSA ${psa}` : ' · PSA none';
       el.activeSccCountBadge.textContent = `${n} SCC${n === 1 ? '' : 's'}${psaBit}`;
+    }
+
+    function updatePsaHint(psaResult) {
+      if (!el.psaHint) return;
+      const enforce = psaResult?.enforce?.level || state.psa?.enforce || '';
+      if (!enforce) {
+        el.psaHint.classList.remove('hidden');
+        el.psaHint.innerHTML = `PSA <span class="font-mono text-ink">enforce</span> is unset — only the SCC gate applies.
+          Set it under <button type="button" id="psaHintOpenCtx" class="underline text-lake">Cluster context → Pod Security Admission</button>
+          (or try sample <span class="font-mono text-ink">SCC≠PSA</span>).`;
+        const btn = document.getElementById('psaHintOpenCtx');
+        if (btn) {
+          btn.addEventListener('click', () => {
+            el.clusterDrawer?.classList.remove('hidden');
+            el.ctxPsaEnforce?.focus();
+            el.ctxPsaEnforce?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, { once: true });
+        }
+        return;
+      }
+      if (psaResult?.blocking) {
+        el.psaHint.classList.remove('hidden');
+        el.psaHint.textContent = `Dual gate: SCC passed, PSA enforce=${enforce} blocked the post-mutation pod.`;
+        return;
+      }
+      el.psaHint.classList.add('hidden');
+      el.psaHint.textContent = '';
     }
 
     function updateGutter() {
@@ -2330,6 +2378,7 @@ volumes:
     function renderDualAdmission({ sccPassed, sccName, sccReports, mutations, orderText, evaluationOrder, psaResult }) {
       setPsaPill(psaResult);
       el.evalOrderRow.textContent = orderText || '';
+      updatePsaHint(psaResult);
 
       if (!sccPassed) {
         el.verdictCard.className = 'verdict verdict--deny';
@@ -2448,6 +2497,141 @@ volumes:
       el.psaPill.style.borderColor = '';
       el.psaPill.style.color = '';
       el.psaPill.textContent = label || '—';
+      if (el.psaHint) {
+        el.psaHint.classList.add('hidden');
+        el.psaHint.textContent = '';
+      }
+    }
+
+    const ERROR_FIELD_HINTS = [
+      { re: /allowPrivilegeEscalation/i, leaf: 'allowPrivilegeEscalation' },
+      { re: /runAsNonRoot/i, leaf: 'runAsNonRoot' },
+      { re: /runAsUser/i, leaf: 'runAsUser' },
+      { re: /seccompProfile|seccomp/i, leaf: 'seccompProfile' },
+      { re: /capabilities\.drop|drop=\["ALL"\]|unrestricted capabilities/i, leaf: 'drop' },
+      { re: /capabilities\.add|capability/i, leaf: 'add' },
+      { re: /hostPath/i, leaf: 'hostPath' },
+      { re: /hostNetwork/i, leaf: 'hostNetwork' },
+      { re: /hostPID/i, leaf: 'hostPID' },
+      { re: /hostIPC/i, leaf: 'hostIPC' },
+      { re: /hostPort/i, leaf: 'hostPort' },
+      { re: /privileged/i, leaf: 'privileged' },
+      { re: /fsGroup/i, leaf: 'fsGroup' },
+      { re: /seLinux/i, leaf: 'seLinuxOptions' }
+    ];
+
+    function parseClusterError(raw) {
+      const text = String(raw || '').trim();
+      if (!text) {
+        return { ok: false, message: 'Paste an oc / API Forbidden error first.' };
+      }
+
+      const notes = [];
+      let gate = null;
+      let psaLevel = '';
+
+      const psaMatch = text.match(/PodSecurity\s+"?(privileged|baseline|restricted)(?::[^"]*)?"?/i)
+        || text.match(/violates\s+PodSecurity\s+"?(privileged|baseline|restricted)/i)
+        || text.match(/pod\s+security\s+(privileged|baseline|restricted)/i);
+      if (psaMatch || /violates\s+PodSecurity/i.test(text) || /podsecurity\.kubernetes\.io/i.test(text)) {
+        gate = 'PSA';
+        psaLevel = normalizePsaLevel(psaMatch?.[1] || 'restricted') || 'restricted';
+        writePsaToUi({
+          enforce: psaLevel,
+          warn: state.psa.warn || psaLevel,
+          audit: state.psa.audit || psaLevel
+        });
+        notes.push(`PSA enforce set to ${psaLevel}`);
+      }
+
+      if (/unable to validate against any security context constraint/i.test(text)
+        || /security context constraint/i.test(text)
+        || (/\bsccs?\b/i.test(text) && /forbidden/i.test(text))) {
+        gate = gate || 'SCC';
+        notes.push('SCC admission deny detected');
+      }
+
+      if (!gate) {
+        // Heuristic: Forbidden + securityContext field language
+        if (/forbidden/i.test(text) && /securityContext|hostNetwork|hostPath|privileged/i.test(text)) {
+          gate = 'SCC';
+          notes.push('Treated as admission deny (SCC assumed)');
+        } else {
+          return {
+            ok: false,
+            message: 'Unrecognized. Need text like “unable to validate against any security context constraint” or “violates PodSecurity …”.'
+          };
+        }
+      }
+
+      // Tick SCCs mentioned as providers if listed (informational; do not clear others)
+      const providerRe = /provider\s+"([^"]+)"/gi;
+      let pm;
+      const providers = [];
+      while ((pm = providerRe.exec(text)) !== null) {
+        providers.push(pm[1]);
+      }
+      if (providers.length) {
+        notes.push(`Providers in error: ${providers.slice(0, 6).join(', ')}${providers.length > 6 ? '…' : ''}`);
+      }
+
+      const containers = [...text.matchAll(/container\s+"([^"]+)"/gi)].map((m) => m[1]);
+      const fieldPaths = [...text.matchAll(/\b(spec\.[a-zA-Z0-9_[\]\."'-]+)/g)].map((m) => m[1]);
+
+      evaluateSccAdmission();
+      switchTab('violations');
+
+      let jumped = null;
+      const yaml = el.yamlEditor.value;
+
+      for (const path of fieldPaths) {
+        const line = locateYamlLine(yaml, path.replace(/"/g, ''));
+        if (line) {
+          jumpToYamlLine(line);
+          jumped = { path, line };
+          break;
+        }
+      }
+
+      if (!jumped) {
+        for (const hint of ERROR_FIELD_HINTS) {
+          if (!hint.re.test(text)) continue;
+          let searchFrom = 0;
+          if (containers[0]) {
+            const escName = containers[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const nameRe = new RegExp(`^\\s*-?\\s*name:\\s*["']?${escName}["']?\\s*$`);
+            const idx = yaml.split('\n').findIndex((l) => nameRe.test(l));
+            if (idx >= 0) searchFrom = idx;
+          }
+          const lines = yaml.split('\n');
+          const keyRe = new RegExp(`^\\s*${hint.leaf}\\s*:`);
+          for (let i = searchFrom; i < lines.length; i++) {
+            if (keyRe.test(lines[i])) {
+              jumpToYamlLine(i + 1);
+              jumped = { path: hint.leaf, line: i + 1 };
+              break;
+            }
+          }
+          if (jumped) break;
+        }
+      }
+
+      if (jumped) {
+        notes.push(`Jumped to L${jumped.line} (${jumped.path})`);
+      } else {
+        notes.push('No matching YAML line found — re-evaluate after pasting the same workload');
+      }
+
+      if (el.ocErrorDetails) el.ocErrorDetails.open = true;
+      updateSccBadge();
+
+      return {
+        ok: true,
+        message: `${gate} error parsed. ${notes.join(' · ')}`,
+        gate,
+        psaLevel,
+        jumped
+      };
     }
 
     function showParseError(msg) {
@@ -2859,7 +3043,8 @@ roleRef:
         'yamlRoleBindingSnippet', 'validateBtn', 'autoFixBtn', 'copyYamlBtn', 'evalOrderRow',
         'ocSccSubjectReview', 'ocSccWhoCan', 'ocContextExport', 'ctxImportEditor',
         'ctxImportStatus', 'ctxImportFiles', 'ctxImportPasteBtn', 'shareLinkBtn',
-        'sccChipRow', 'customSccChips'
+        'sccChipRow', 'customSccChips', 'psaHint', 'ocErrorEditor', 'ocErrorParseBtn',
+        'ocErrorClearBtn', 'ocErrorStatus', 'ocErrorDetails'
       ].forEach((id) => { el[id] = document.getElementById(id); });
     }
 
@@ -2870,10 +3055,19 @@ roleRef:
       updateRbacSnippets();
 
       const restored = await restoreShareFromLocation();
+      const urlParams = new URLSearchParams(window.location.search);
+      const sampleParam = urlParams.get('sample');
       if (!restored) {
-        el.yamlEditor.value = PRESETS.root;
-        updateGutter();
-        evaluateSccAdmission();
+        if (sampleParam && PRESETS[sampleParam]) {
+          loadPreset(sampleParam);
+        } else {
+          el.yamlEditor.value = PRESETS.root;
+          updateGutter();
+          evaluateSccAdmission();
+        }
+      }
+      if (urlParams.get('compact') === '1') {
+        el.clusterDrawer?.classList.add('hidden');
       }
 
       document.querySelectorAll('.preset-btn').forEach((btn) => {
@@ -2967,6 +3161,27 @@ roleRef:
 
       if (el.shareLinkBtn) {
         el.shareLinkBtn.addEventListener('click', () => { copyShareLink(); });
+      }
+
+      if (el.ocErrorParseBtn) {
+        el.ocErrorParseBtn.addEventListener('click', () => {
+          const result = parseClusterError(el.ocErrorEditor?.value || '');
+          if (el.ocErrorStatus) {
+            el.ocErrorStatus.textContent = result.message;
+            el.ocErrorStatus.className = result.ok
+              ? 'text-[11px] status-ok'
+              : 'text-[11px] status-warn';
+          }
+        });
+      }
+      if (el.ocErrorClearBtn) {
+        el.ocErrorClearBtn.addEventListener('click', () => {
+          if (el.ocErrorEditor) el.ocErrorEditor.value = '';
+          if (el.ocErrorStatus) {
+            el.ocErrorStatus.textContent = '';
+            el.ocErrorStatus.className = 'text-[11px] text-mute';
+          }
+        });
       }
 
       el.violationsContainer.addEventListener('click', (e) => {

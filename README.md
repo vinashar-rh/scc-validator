@@ -4,7 +4,11 @@
 
 Client-side OpenShift **Security Context Constraint (SCC)** + **Pod Security Admission (PSA)** simulator.
 
-![SCC Validator showing an admission forbidden result for a failing workload](docs/scc-validator.png)
+![SCC Validator showing SCC anyuid admitting a root pod while PSA enforce=restricted still forbids](docs/scc-validator.png)
+
+Short demo loop (SCC deny → SCC≠PSA dual gate):
+
+![SCC Validator toggling between a classic SCC deny and the SCC≠PSA sample](docs/scc-validator.gif)
 
 Live app: https://vinashar-rh.github.io/scc-validator/
 
@@ -58,8 +62,9 @@ Workload YAML and cluster context stay in the browser. Evaluation does not uploa
    - PSA labels (`enforce` / `warn` / `audit`) — default unset (SCC-only)
    - which SCCs that ServiceAccount may use (default: `restricted-v2` only)
 4. Read **Admission decision** (SCC + PSA pills). On deny, open **Violations** (tagged SCC vs PSA) and click a finding to jump to the YAML line.
-5. Optional: **Auto-fix for restricted-v2**, or use the **RBAC** tab if the workload truly needs a higher SCC.
-6. Optional: **Copy share link** to send someone the same YAML + context.
+5. Optional: open **Paste cluster error** and drop in an `oc create --dry-run=server` Forbidden message — the app detects SCC vs PSA, sets enforce when needed, and jumps to a matching YAML field.
+6. Optional: **Auto-fix for restricted-v2**, or use the **RBAC** tab if the workload truly needs a higher SCC.
+7. Optional: **Copy share link** to send someone the same YAML + context. Deep-link a sample with `?sample=psagate` (or any sample key).
 
 ---
 
@@ -125,6 +130,13 @@ This is still an approximation of admission, not `oc create --dry-run=server`.
 - Findings are tagged **SCC** or **PSA**. Click a row (or its `L12` badge) to jump to the YAML line.
 - **RBAC** suggests a least-privilege stock SCC grant (`oc adm policy add-scc-to-user` + RoleBinding). Prefer fixing the pod for `restricted-v2` when possible.
 
+### Paste cluster error
+
+Under the admission card, **Paste cluster error** accepts Forbidden text from `oc create --dry-run=server` / the API:
+
+- `unable to validate against any security context constraint` → treated as an SCC deny; jumps to a matching field when present in the YAML
+- `violates PodSecurity "restricted:…"` (or baseline) → sets PSA **enforce** to that profile, re-evaluates, jumps to the first matching field (e.g. `allowPrivilegeEscalation`, `runAsUser`)
+
 ### Auto-fix
 
 **Auto-fix for restricted-v2** rewrites the pasted YAML toward a restricted-friendly shape (drops host namespaces / hostPath-style volumes where needed, strips root UID / privileged, sets drop `ALL` + `NET_BIND_SERVICE`). Review the diff before using it in Git.
@@ -145,6 +157,24 @@ This is still an approximation of admission, not `oc create --dry-run=server`.
 | Custom SCC | Pod with `NET_ADMIN` + imported `netadmin-nonroot` SCC |
 | SCC≠PSA | `anyuid` admits root pod; PSA `enforce=restricted` still forbids |
 | Clean microservice | Passes `restricted-v2` (and PSA restricted if you enable it) |
+
+### Expected outcomes (gold set)
+
+Defaults unless noted: namespace UID range `1000670000/10000`, only `restricted-v2` granted, PSA enforce unset.
+
+| Sample | Winning SCC | PSA enforce | Overall |
+|--------|-------------|-------------|---------|
+| UID 0 root | none | none | Forbidden by SCC |
+| HostPath | none | none | Forbidden by SCC |
+| hostPort | none | none | Forbidden by SCC |
+| UID out of range | none | none | Forbidden by SCC |
+| NFS volume | none | none | Forbidden by SCC |
+| Privileged agent | none | none | Forbidden by SCC |
+| anyuid priority | `anyuid` | none | Allowed |
+| Custom SCC | `netadmin-nonroot` | none | Allowed |
+| SCC≠PSA | `anyuid` | `restricted` | Forbidden by PSA |
+| Clean microservice | `restricted-v2` | none | Allowed |
+| Clean microservice + enforce=restricted | `restricted-v2` | `restricted` | Allowed |
 
 ---
 
