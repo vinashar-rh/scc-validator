@@ -303,8 +303,12 @@
               Namespace labels <span class="font-mono text-ink">pod-security.kubernetes.io/*</span>.
               Evaluated on the <span class="text-ink font-medium">post-SCC-mutation</span> pod (same order as the API server).
               Only <span class="font-mono">enforce</span> blocks; warn/audit surface findings.
+              Many OpenShift projects <span class="text-ink font-medium">warn/audit at restricted</span> but leave enforce open until you tighten the namespace.
             </p>
           </div>
+          <button id="psaTypicalBtn" type="button" class="btn text-xs shrink-0" title="warn/audit=restricted, enforce unset">
+            Typical OpenShift project
+          </button>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs max-w-3xl">
           <div>
@@ -312,7 +316,7 @@
               enforce <span class="font-mono text-[10px] font-normal">(blocks)</span>
             </label>
             <select id="ctxPsaEnforce" class="field">
-              <option value="">none</option>
+              <option value="" selected>none</option>
               <option value="privileged">privileged</option>
               <option value="baseline">baseline</option>
               <option value="restricted">restricted</option>
@@ -324,7 +328,7 @@
               <option value="">none</option>
               <option value="privileged">privileged</option>
               <option value="baseline">baseline</option>
-              <option value="restricted">restricted</option>
+              <option value="restricted" selected>restricted</option>
             </select>
           </div>
           <div>
@@ -333,7 +337,7 @@
               <option value="">none</option>
               <option value="privileged">privileged</option>
               <option value="baseline">baseline</option>
-              <option value="restricted">restricted</option>
+              <option value="restricted" selected>restricted</option>
             </select>
           </div>
         </div>
@@ -1042,7 +1046,7 @@ volumes:
       matchedScc: null,
       admitted: false,
       suggestedScc: 'anyuid',
-      psa: { enforce: '', warn: '', audit: '' },
+      psa: { enforce: '', warn: 'restricted', audit: 'restricted' },
       psaResult: null,
       clusterSccs: {
         'restricted-v2': true,
@@ -1052,6 +1056,13 @@ volumes:
         'privileged': false
       }
     };
+
+    /** Common OpenShift project labels: warn/audit restricted, enforce left open. */
+    const OPENSHIFT_TYPICAL_PSA = Object.freeze({
+      enforce: '',
+      warn: 'restricted',
+      audit: 'restricted'
+    });
 
     const PSA_LEVELS = new Set(['privileged', 'baseline', 'restricted']);
     const PSA_BASELINE_ADD_CAPS = new Set([
@@ -1577,6 +1588,13 @@ volumes:
       state.psa = next;
     }
 
+    function applyTypicalOpenShiftPsa() {
+      writePsaToUi({ ...OPENSHIFT_TYPICAL_PSA });
+      updateSccBadge();
+      evaluateSccAdmission();
+      scheduleShareUrlSync();
+    }
+
     function parseInjectedValue(raw) {
       const s = String(raw ?? '').trim();
       if (s === 'true') return true;
@@ -1862,19 +1880,31 @@ volumes:
 
     function updateSccBadge() {
       const n = Object.values(state.clusterSccs).filter(Boolean).length;
-      const psa = (state.psa?.enforce !== undefined ? state.psa.enforce : null) ?? readPsaFromUi().enforce;
-      const psaBit = psa ? ` · PSA ${psa}` : ' · PSA none';
+      const psa = state.psa?.enforce !== undefined ? state.psa : readPsaFromUi();
+      let psaBit = ' · PSA none';
+      if (psa.enforce) psaBit = ` · PSA ${psa.enforce}`;
+      else if (psa.warn || psa.audit) psaBit = ` · PSA warn`;
       el.activeSccCountBadge.textContent = `${n} SCC${n === 1 ? '' : 's'}${psaBit}`;
     }
 
     function updatePsaHint(psaResult) {
       if (!el.psaHint) return;
       const enforce = psaResult?.enforce?.level || state.psa?.enforce || '';
+      const warnLevel = psaResult?.warn?.level || state.psa?.warn || '';
       if (!enforce) {
         el.psaHint.classList.remove('hidden');
-        el.psaHint.innerHTML = `PSA <span class="font-mono text-ink">enforce</span> is unset — only the SCC gate applies.
-          Set it under <button type="button" id="psaHintOpenCtx" class="underline text-lake">Cluster context → Pod Security Admission</button>
-          (or try sample <span class="font-mono text-ink">SCC≠PSA</span>).`;
+        if (psaResult?.warnViolations?.length) {
+          el.psaHint.innerHTML = `Typical OpenShift shape: <span class="font-mono text-ink">enforce</span> is open, but
+            <span class="font-mono text-ink">warn/audit=${esc(warnLevel || 'restricted')}</span> reported
+            ${psaResult.warnViolations.length} finding(s) (does not block).
+            Tighten with sample <span class="font-mono text-ink">SCC≠PSA</span> or set enforce under
+            <button type="button" id="psaHintOpenCtx" class="underline text-lake">Cluster context</button>.`;
+        } else {
+          el.psaHint.innerHTML = `PSA <span class="font-mono text-ink">enforce</span> is unset — admission is decided by SCC.
+            Warn/audit default to <span class="font-mono text-ink">restricted</span> (typical OpenShift project).
+            Set enforce under <button type="button" id="psaHintOpenCtx" class="underline text-lake">Cluster context → Pod Security Admission</button>
+            or try sample <span class="font-mono text-ink">SCC≠PSA</span>.`;
+        }
         const btn = document.getElementById('psaHintOpenCtx');
         if (btn) {
           btn.addEventListener('click', () => {
@@ -2004,6 +2034,8 @@ volumes:
           warn: payload.p.w,
           audit: payload.p.d
         });
+      } else {
+        writePsaToUi({ ...OPENSHIFT_TYPICAL_PSA });
       }
       if (payload.c && typeof payload.c === 'object') {
         Object.entries(payload.c).forEach(([name, def]) => {
@@ -2175,7 +2207,7 @@ volumes:
       if (ctx?.psa) {
         writePsaToUi(ctx.psa);
       } else {
-        writePsaToUi({ enforce: '', warn: '', audit: '' });
+        writePsaToUi({ ...OPENSHIFT_TYPICAL_PSA });
       }
       updateGutter();
       updateUidHint();
@@ -3044,12 +3076,13 @@ roleRef:
         'ocSccSubjectReview', 'ocSccWhoCan', 'ocContextExport', 'ctxImportEditor',
         'ctxImportStatus', 'ctxImportFiles', 'ctxImportPasteBtn', 'shareLinkBtn',
         'sccChipRow', 'customSccChips', 'psaHint', 'ocErrorEditor', 'ocErrorParseBtn',
-        'ocErrorClearBtn', 'ocErrorStatus', 'ocErrorDetails'
+        'ocErrorClearBtn', 'ocErrorStatus', 'ocErrorDetails', 'psaTypicalBtn'
       ].forEach((id) => { el[id] = document.getElementById(id); });
     }
 
     window.onload = async function () {
       bindEls();
+      writePsaToUi({ ...OPENSHIFT_TYPICAL_PSA });
       updateUidHint();
       updateSccBadge();
       updateRbacSnippets();
@@ -3108,6 +3141,10 @@ roleRef:
           scheduleShareUrlSync();
         });
       });
+
+      if (el.psaTypicalBtn) {
+        el.psaTypicalBtn.addEventListener('click', () => { applyTypicalOpenShiftPsa(); });
+      }
 
       if (el.sccChipRow) {
         el.sccChipRow.addEventListener('change', (e) => {

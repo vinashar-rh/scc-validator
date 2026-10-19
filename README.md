@@ -59,7 +59,7 @@ Workload YAML and cluster context stay in the browser. Evaluation does not uploa
 3. Open **Cluster context** and confirm:
    - namespace / ServiceAccount
    - UID range and SELinux MCS (or import them from cluster YAML)
-   - PSA labels (`enforce` / `warn` / `audit`) — default unset (SCC-only)
+   - PSA labels — default **typical OpenShift project**: `warn`/`audit=restricted`, `enforce` unset (SCC decides; warn findings still show)
    - which SCCs that ServiceAccount may use (default: `restricted-v2` only)
 4. Read **Admission decision** (SCC + PSA pills). On deny, open **Violations** (tagged SCC vs PSA) and click a finding to jump to the YAML line.
 5. Optional: open **Paste cluster error** and drop in an `oc create --dry-run=server` Forbidden message — the app detects SCC vs PSA, sets enforce when needed, and jumps to a matching YAML field.
@@ -99,7 +99,7 @@ Then **Upload YAML** or paste into the box and click **Apply pasted YAML**.
 
 | Export | Used for |
 |--------|----------|
-| Namespace / Project | Name, `openshift.io/sa.scc.uid-range`, `openshift.io/sa.scc.mcs`, PSA labels `pod-security.kubernetes.io/{enforce,warn,audit}` |
+| Namespace / Project | Name, `openshift.io/sa.scc.uid-range`, `openshift.io/sa.scc.mcs`, PSA labels `pod-security.kubernetes.io/{enforce,warn,audit}` (or use **Typical OpenShift project**) |
 | RoleBinding / ClusterRoleBinding (`system:openshift:scc:*`) | SCCs available to the ServiceAccount |
 | ServiceAccount (optional) | SA name |
 | `SecurityContextConstraints` (`oc get scc`) | **Stock + custom SCC rules** the simulator will evaluate |
@@ -160,18 +160,18 @@ Under the admission card, **Paste cluster error** accepts Forbidden text from `o
 
 ### Expected outcomes (gold set)
 
-Defaults unless noted: namespace UID range `1000670000/10000`, only `restricted-v2` granted, PSA enforce unset.
+Defaults unless noted: namespace UID range `1000670000/10000`, only `restricted-v2` granted, PSA **warn/audit=restricted**, **enforce unset** (use **Typical OpenShift project** to reset).
 
 | Sample | Winning SCC | PSA enforce | Overall |
 |--------|-------------|-------------|---------|
-| UID 0 root | none | none | Forbidden by SCC |
+| UID 0 root | none | none | Forbidden by SCC (PSA warn findings may also list) |
 | HostPath | none | none | Forbidden by SCC |
 | hostPort | none | none | Forbidden by SCC |
 | UID out of range | none | none | Forbidden by SCC |
 | NFS volume | none | none | Forbidden by SCC |
 | Privileged agent | none | none | Forbidden by SCC |
-| anyuid priority | `anyuid` | none | Allowed |
-| Custom SCC | `netadmin-nonroot` | none | Allowed |
+| anyuid priority | `anyuid` | none | Allowed (PSA warnings — anyuid does not harden for restricted) |
+| Custom SCC | `netadmin-nonroot` | none | Allowed (likely PSA warnings for extra caps) |
 | SCC≠PSA | `anyuid` | `restricted` | Forbidden by PSA |
 | Clean microservice | `restricted-v2` | none | Allowed |
 | Clean microservice + enforce=restricted | `restricted-v2` | `restricted` | Allowed |
