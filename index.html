@@ -184,7 +184,24 @@
     .preset[data-preset="anyuidwins"] { border-left: 3px solid #009596; }
     .preset[data-preset="nfs"] { border-left: 3px solid #8a8d90; }
     .preset[data-preset="customscc"] { border-left: 3px solid #c9190b; }
+    .preset[data-preset="psagate"] { border-left: 3px solid #5752d1; }
     .chip--custom { border-color: #0066cc; background: #f0f7ff; }
+    .gate-badge {
+      font-family: "Red Hat Mono", monospace;
+      font-size: 0.62rem; font-weight: 600;
+      padding: 0.08rem 0.3rem;
+      border: 1px solid var(--line);
+      background: #f2f2f5;
+      color: var(--mute);
+      white-space: nowrap;
+    }
+    .gate-badge--scc { border-color: #0066cc; color: #0066cc; background: #f0f7ff; }
+    .gate-badge--psa { border-color: #5752d1; color: #5752d1; background: #f4f3ff; }
+    .gate-badge--warn { border-color: #795600; color: #795600; background: #fff4ce; }
+    .dual-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 0.5rem; font-size: 0.75rem;
+    }
   </style>
 </head>
 <body class="text-ink font-sans min-h-screen flex flex-col antialiased">
@@ -194,9 +211,9 @@
       <div>
         <div class="flex items-baseline gap-3">
           <h1 class="font-heading font-bold text-ink text-xl md:text-2xl tracking-tight">SCC Validator</h1>
-          <span class="font-mono text-[11px] text-mute">OpenShift 4.14+ admission simulator</span>
+          <span class="font-mono text-[11px] text-mute">OpenShift SCC + PSA simulator</span>
         </div>
-        <p class="text-sm text-mute mt-0.5">Paste a workload. See which Security Context Constraint admits it — and why others refuse.</p>
+        <p class="text-sm text-mute mt-0.5">Paste a workload. See which SCC admits it — then whether Pod Security Admission would still block it.</p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <button id="toggleClusterDrawerBtn" type="button" class="btn">
@@ -226,7 +243,7 @@
             <div class="font-semibold text-ink">Import cluster context</div>
             <p class="text-[11px] text-mute mt-1 max-w-3xl leading-relaxed">
               Export namespace, RoleBindings, and SCC objects, then paste or upload them.
-              Fills UID range, MCS, grants, and <span class="text-ink font-medium">custom SCC definitions</span>.
+              Fills UID range, MCS, <span class="text-ink font-medium">PSA labels</span>, grants, and custom SCC definitions.
             </p>
           </div>
           <div class="flex items-center gap-2 shrink-0">
@@ -275,6 +292,50 @@
             SELinux MCS <span class="font-mono text-[10px] font-normal">(sa.scc.mcs)</span>
           </label>
           <input type="text" id="ctxMcsCategory" value="s0:c26,c10" class="field">
+        </div>
+      </div>
+
+      <div class="mt-4 pt-3 border-t border-line">
+        <div class="flex flex-wrap items-end justify-between gap-2 mb-2">
+          <div>
+            <label class="block text-xs font-semibold text-ink">Pod Security Admission</label>
+            <p class="text-[11px] text-mute mt-0.5 max-w-3xl leading-relaxed">
+              Namespace labels <span class="font-mono text-ink">pod-security.kubernetes.io/*</span>.
+              Evaluated on the <span class="text-ink font-medium">post-SCC-mutation</span> pod (same order as the API server).
+              Only <span class="font-mono">enforce</span> blocks; warn/audit surface findings.
+            </p>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs max-w-3xl">
+          <div>
+            <label class="block text-mute font-medium mb-1" for="ctxPsaEnforce">
+              enforce <span class="font-mono text-[10px] font-normal">(blocks)</span>
+            </label>
+            <select id="ctxPsaEnforce" class="field">
+              <option value="">none</option>
+              <option value="privileged">privileged</option>
+              <option value="baseline">baseline</option>
+              <option value="restricted">restricted</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-mute font-medium mb-1" for="ctxPsaWarn">warn</label>
+            <select id="ctxPsaWarn" class="field">
+              <option value="">none</option>
+              <option value="privileged">privileged</option>
+              <option value="baseline">baseline</option>
+              <option value="restricted">restricted</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-mute font-medium mb-1" for="ctxPsaAudit">audit</label>
+            <select id="ctxPsaAudit" class="field">
+              <option value="">none</option>
+              <option value="privileged">privileged</option>
+              <option value="baseline">baseline</option>
+              <option value="restricted">restricted</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -345,6 +406,7 @@
           <button type="button" data-preset="daemonset" class="preset-btn preset">Privileged agent</button>
           <button type="button" data-preset="anyuidwins" class="preset-btn preset">anyuid priority</button>
           <button type="button" data-preset="customscc" class="preset-btn preset">Custom SCC</button>
+          <button type="button" data-preset="psagate" class="preset-btn preset">SCC≠PSA</button>
           <button type="button" data-preset="compliant" class="preset-btn preset">Clean microservice</button>
         </div>
       </div>
@@ -373,14 +435,20 @@
               <span>Checking specification…</span>
             </div>
             <div id="verdictSubtitle" class="text-xs text-mute mt-1">
-              Client-side SCC matching (priority, then restrictiveness, then name)
+              SCC first (priority → restrictiveness → name), then PSA on the mutated pod
             </div>
           </div>
           <div id="verdictIconContainer" class="hidden" aria-hidden="true"></div>
         </div>
-        <div class="mt-4 pt-3 border-t border-line/80 flex items-center justify-between text-xs gap-2">
-          <span class="text-mute">Winning SCC</span>
-          <span id="matchedSccPill" class="scc-tag">Evaluating…</span>
+        <div class="mt-4 pt-3 border-t border-line/80 space-y-2">
+          <div class="dual-row">
+            <span class="text-mute">Winning SCC</span>
+            <span id="matchedSccPill" class="scc-tag">Evaluating…</span>
+          </div>
+          <div class="dual-row">
+            <span class="text-mute">PSA enforce</span>
+            <span id="psaPill" class="scc-tag">—</span>
+          </div>
         </div>
         <div id="evalOrderRow" class="mt-2 text-[10px] text-mute font-mono leading-relaxed"></div>
       </div>
@@ -448,7 +516,7 @@ roleRef:
   </main>
 
   <footer class="px-4 md:px-6 py-3 text-[11px] text-mute border-t border-line bg-panel">
-    Client-side simulator — not a substitute for
+    Client-side SCC + PSA simulator — not a substitute for
     <code class="font-mono text-ink">oc create --dry-run=server</code>
     or
     <code class="font-mono text-ink">oc adm policy scc-subject-review</code>.
@@ -559,12 +627,15 @@ spec:
         ports:
         - containerPort: 8080
         securityContext:
+          runAsNonRoot: true
           allowPrivilegeEscalation: false
           capabilities:
             drop:
             - ALL
             add:
-            - NET_BIND_SERVICE`,
+            - NET_BIND_SERVICE
+          seccompProfile:
+            type: RuntimeDefault`,
 
       hostport: `apiVersion: apps/v1
 kind: Deployment
@@ -701,7 +772,31 @@ spec:
           allowPrivilegeEscalation: false
           capabilities:
             drop: ["ALL"]
-            add: ["NET_ADMIN", "NET_RAW"]`
+            add: ["NET_ADMIN", "NET_RAW"]`,
+
+      psagate: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: legacy-root-anyuid
+  namespace: prod-workloads
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: legacy-root-anyuid
+  template:
+    metadata:
+      labels:
+        app: legacy-root-anyuid
+    spec:
+      serviceAccountName: default
+      containers:
+      - name: web
+        image: registry.access.redhat.com/ubi9/ubi:latest
+        command: ["sleep", "3600"]
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: true`
     };
 
     const SAMPLE_CUSTOM_SCC_YAML = `apiVersion: security.openshift.io/v1
@@ -772,6 +867,16 @@ volumes:
           privileged: false,
           'netadmin-nonroot': true
         }
+      },
+      psagate: {
+        clusterSccs: {
+          'restricted-v2': true,
+          'nonroot-v2': false,
+          'hostnetwork-v2': false,
+          anyuid: true,
+          privileged: false
+        },
+        psa: { enforce: 'restricted', warn: 'restricted', audit: 'restricted' }
       }
     };
 
@@ -916,6 +1021,8 @@ volumes:
       matchedScc: null,
       admitted: false,
       suggestedScc: 'anyuid',
+      psa: { enforce: '', warn: '', audit: '' },
+      psaResult: null,
       clusterSccs: {
         'restricted-v2': true,
         'nonroot-v2': false,
@@ -924,6 +1031,27 @@ volumes:
         'privileged': false
       }
     };
+
+    const PSA_LEVELS = new Set(['privileged', 'baseline', 'restricted']);
+    const PSA_BASELINE_ADD_CAPS = new Set([
+      'AUDIT_WRITE', 'CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'FSETID', 'KILL', 'MKNOD',
+      'NET_BIND_SERVICE', 'SETFCAP', 'SETGID', 'SETPCAP', 'SETUID', 'SYS_CHROOT'
+    ]);
+    const PSA_RESTRICTED_VOLUMES = new Set([
+      'configMap', 'csi', 'downwardAPI', 'emptyDir', 'ephemeral',
+      'persistentVolumeClaim', 'projected', 'secret'
+    ]);
+    const PSA_SAFE_SYSCTLS = new Set([
+      'kernel.shm_rmid_forced', 'net.ipv4.ip_local_port_range',
+      'net.ipv4.ip_unprivileged_port_start', 'net.ipv4.tcp_syncookies',
+      'net.ipv4.ping_group_range', 'net.ipv4.ip_local_reserved_ports',
+      'net.ipv4.tcp_keepalive_time', 'net.ipv4.tcp_fin_timeout',
+      'net.ipv4.tcp_keepalive_intvl', 'net.ipv4.tcp_keepalive_probes',
+      'net.ipv4.tcp_rmem', 'net.ipv4.tcp_wmem'
+    ]);
+    const PSA_SELINUX_TYPES = new Set([
+      'container_t', 'container_init_t', 'container_kvm_t', 'container_engine_t'
+    ]);
 
     const el = {};
 
@@ -1290,6 +1418,13 @@ volumes:
             injectedValue: String(uidRange.min),
             source: `Namespace UID range (${uidRange.min}/${uidRange.size})`
           });
+          if (runAsNonRoot === undefined) {
+            mutations.push({
+              field: `${path}.securityContext.runAsNonRoot`,
+              injectedValue: 'true',
+              source: `${sccName} (aligns with PSA restricted)`
+            });
+          }
         } else if (scc.runAsUser === 'MustRunAsNonRoot') {
           if (runAsNonRoot === false) {
             addV(`${path}.securityContext.runAsNonRoot`, 'false',
@@ -1395,6 +1530,310 @@ volumes:
       return null;
     }
 
+    function normalizePsaLevel(value) {
+      const s = String(value || '').trim().toLowerCase();
+      if (!s || s === 'none' || s === 'off') return '';
+      return PSA_LEVELS.has(s) ? s : '';
+    }
+
+    function readPsaFromUi() {
+      return {
+        enforce: normalizePsaLevel(el.ctxPsaEnforce?.value),
+        warn: normalizePsaLevel(el.ctxPsaWarn?.value),
+        audit: normalizePsaLevel(el.ctxPsaAudit?.value)
+      };
+    }
+
+    function writePsaToUi(psa) {
+      const next = {
+        enforce: normalizePsaLevel(psa?.enforce),
+        warn: normalizePsaLevel(psa?.warn),
+        audit: normalizePsaLevel(psa?.audit)
+      };
+      if (el.ctxPsaEnforce) el.ctxPsaEnforce.value = next.enforce;
+      if (el.ctxPsaWarn) el.ctxPsaWarn.value = next.warn;
+      if (el.ctxPsaAudit) el.ctxPsaAudit.value = next.audit;
+      state.psa = next;
+    }
+
+    function parseInjectedValue(raw) {
+      const s = String(raw ?? '').trim();
+      if (s === 'true') return true;
+      if (s === 'false') return false;
+      if (/^-?\d+$/.test(s)) return Number(s);
+      if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+        return s.slice(1, -1);
+      }
+      if ((s.startsWith('[') && s.endsWith(']')) || (s.startsWith('{') && s.endsWith('}'))) {
+        try { return JSON.parse(s); } catch (_) { /* fall through */ }
+      }
+      return s;
+    }
+
+    function resolveContainerRef(spec, token) {
+      const lists = [
+        { key: 'containers', list: spec.containers || [] },
+        { key: 'initContainers', list: spec.initContainers || [] },
+        { key: 'ephemeralContainers', list: spec.ephemeralContainers || [] }
+      ];
+      for (const { list } of lists) {
+        const byName = list.find((c) => c && c.name === token);
+        if (byName) return byName;
+      }
+      const idx = Number(token);
+      if (!Number.isNaN(idx)) {
+        for (const { list } of lists) {
+          if (list[idx]) return list[idx];
+        }
+      }
+      return null;
+    }
+
+    function setNested(obj, pathParts, value) {
+      let cur = obj;
+      for (let i = 0; i < pathParts.length - 1; i++) {
+        const key = pathParts[i];
+        if (cur[key] == null || typeof cur[key] !== 'object') cur[key] = {};
+        cur = cur[key];
+      }
+      const last = pathParts[pathParts.length - 1];
+      if (Array.isArray(value) && Array.isArray(cur[last])) {
+        const merged = new Set([
+          ...cur[last].map((x) => String(x).toUpperCase()),
+          ...value.map((x) => String(x).toUpperCase())
+        ]);
+        cur[last] = [...merged];
+      } else {
+        cur[last] = value;
+      }
+    }
+
+    function applyMutationsToPodSpec(podSpec, mutations) {
+      const spec = JSON.parse(JSON.stringify(podSpec || {}));
+      for (const m of (mutations || [])) {
+        const field = String(m.field || '');
+        if (!field.startsWith('spec.') && !field.startsWith('containers')) continue;
+        const value = parseInjectedValue(m.injectedValue);
+        const containerMatch = field.match(/^spec\.(containers|initContainers|ephemeralContainers)\[([^\]]+)\]\.(.+)$/);
+        if (containerMatch) {
+          const listKey = containerMatch[1];
+          if (!spec[listKey]) spec[listKey] = [];
+          let container = resolveContainerRef(spec, containerMatch[2]);
+          if (!container) {
+            container = { name: containerMatch[2], securityContext: {} };
+            spec[listKey].push(container);
+          }
+          setNested(container, containerMatch[3].split('.'), value);
+          continue;
+        }
+        const bare = field.startsWith('spec.') ? field.slice(5) : field;
+        setNested(spec, bare.split('.'), value);
+      }
+      return spec;
+    }
+
+    function psaSeccompType(profile) {
+      if (!profile) return null;
+      if (typeof profile === 'string') {
+        const s = profile.toLowerCase();
+        if (s === 'runtime/default' || s === 'runtimedefault') return 'RuntimeDefault';
+        if (s === 'unconfined') return 'Unconfined';
+        if (s === 'localhost' || s.startsWith('localhost/')) return 'Localhost';
+        return profile;
+      }
+      return profile.type || null;
+    }
+
+    function evaluatePsaProfile(podSpec, level) {
+      const violations = [];
+      if (!level || level === 'privileged') {
+        return { level: level || '', passed: true, violations };
+      }
+
+      const add = (field, val, reason, fix) => {
+        violations.push({
+          gate: 'PSA',
+          profile: level,
+          field,
+          val: val == null ? '—' : String(val),
+          reason,
+          fix
+        });
+      };
+
+      const containers = collectContainers(podSpec);
+      const podSec = podSpec.securityContext || {};
+
+      if (podSpec.hostNetwork) {
+        add('spec.hostNetwork', 'true', `PSA ${level} forbids hostNetwork.`, 'Remove hostNetwork or lower the PSA profile.');
+      }
+      if (podSpec.hostPID) {
+        add('spec.hostPID', 'true', `PSA ${level} forbids hostPID.`, 'Remove hostPID or lower the PSA profile.');
+      }
+      if (podSpec.hostIPC) {
+        add('spec.hostIPC', 'true', `PSA ${level} forbids hostIPC.`, 'Remove hostIPC or lower the PSA profile.');
+      }
+
+      for (const vol of (podSpec.volumes || [])) {
+        const type = volumeType(vol);
+        if (type === 'hostPath') {
+          add(`spec.volumes[name=${vol.name || 'hostPath'}].hostPath`, vol.hostPath?.path || 'path',
+            `PSA ${level} forbids HostPath volumes.`, 'Use a PVC, emptyDir, or projected volume.');
+        } else if (level === 'restricted' && type && !PSA_RESTRICTED_VOLUMES.has(type)) {
+          add(`spec.volumes[name=${vol.name || type}].${type}`, type,
+            `PSA restricted only allows: ${[...PSA_RESTRICTED_VOLUMES].join(', ')}.`,
+            `Remove volume type '${type}' or lower enforce to baseline/privileged.`);
+        }
+      }
+
+      for (const sys of (podSec.sysctls || [])) {
+        const name = sys?.name || '';
+        if (name && !PSA_SAFE_SYSCTLS.has(name)) {
+          add('spec.securityContext.sysctls', name,
+            `Sysctl '${name}' is not in the PSA safe list.`, 'Remove the sysctl or use a privileged namespace.');
+        }
+      }
+
+      const checkSeLinux = (sel, path) => {
+        if (!sel) return;
+        if (sel.user) add(`${path}.user`, sel.user, 'PSA baseline+ forbids custom SELinux user.', 'Omit seLinuxOptions.user.');
+        if (sel.role) add(`${path}.role`, sel.role, 'PSA baseline+ forbids custom SELinux role.', 'Omit seLinuxOptions.role.');
+        if (sel.type && !PSA_SELINUX_TYPES.has(sel.type)) {
+          add(`${path}.type`, sel.type, `SELinux type '${sel.type}' is not allowed by PSA.`, 'Use container_t / container_init_t / container_kvm_t / container_engine_t or omit.');
+        }
+      };
+      checkSeLinux(podSec.seLinuxOptions, 'spec.securityContext.seLinuxOptions');
+
+      const podSeccomp = psaSeccompType(podSec.seccompProfile);
+      if (level === 'baseline' && podSeccomp === 'Unconfined') {
+        add('spec.securityContext.seccompProfile.type', 'Unconfined',
+          'PSA baseline forbids Unconfined seccomp.', 'Omit seccompProfile or use RuntimeDefault.');
+      }
+      if (level === 'restricted' && podSeccomp && podSeccomp !== 'RuntimeDefault' && podSeccomp !== 'Localhost') {
+        add('spec.securityContext.seccompProfile.type', podSeccomp,
+          'PSA restricted requires RuntimeDefault or Localhost seccomp.', 'Set seccompProfile.type: RuntimeDefault.');
+      }
+
+      for (const { c, path } of containers) {
+        const sec = c.securityContext || {};
+        checkSeLinux(sec.seLinuxOptions, `${path}.securityContext.seLinuxOptions`);
+
+        if (sec.privileged) {
+          add(`${path}.securityContext.privileged`, 'true',
+            `PSA ${level} forbids privileged containers.`, 'Set privileged: false.');
+        }
+        if (sec.windowsOptions?.hostProcess) {
+          add(`${path}.securityContext.windowsOptions.hostProcess`, 'true',
+            'PSA baseline+ forbids Windows HostProcess containers.', 'Remove hostProcess: true.');
+        }
+        if (sec.procMount && sec.procMount !== 'Default') {
+          add(`${path}.securityContext.procMount`, sec.procMount,
+            'PSA baseline+ requires Default procMount.', 'Omit procMount or set Default.');
+        }
+
+        for (const port of (c.ports || [])) {
+          if (port.hostPort) {
+            add(`${path}.ports[containerPort=${port.containerPort}].hostPort`, String(port.hostPort),
+              `PSA ${level} forbids hostPort.`, 'Remove hostPort.');
+          }
+        }
+
+        const added = (sec.capabilities?.add || []).map((x) => String(x).toUpperCase());
+        const dropped = (sec.capabilities?.drop || []).map((x) => String(x).toUpperCase());
+
+        if (level === 'baseline') {
+          for (const cap of added) {
+            if (!PSA_BASELINE_ADD_CAPS.has(cap)) {
+              add(`${path}.securityContext.capabilities.add`, cap,
+                `Capability '${cap}' is not allowed by PSA baseline.`, 'Remove the capability or use privileged.');
+            }
+          }
+        }
+
+        if (level === 'restricted') {
+          if (!dropped.includes('ALL')) {
+            add(`${path}.securityContext.capabilities.drop`, dropped.join(',') || '—',
+              'PSA restricted requires capabilities.drop to include ALL.', 'Set capabilities.drop: ["ALL"].');
+          }
+          for (const cap of added) {
+            if (cap !== 'NET_BIND_SERVICE') {
+              add(`${path}.securityContext.capabilities.add`, cap,
+                'PSA restricted only permits adding NET_BIND_SERVICE.', 'Remove extra capabilities.');
+            }
+          }
+          if (sec.allowPrivilegeEscalation !== false) {
+            add(`${path}.securityContext.allowPrivilegeEscalation`,
+              sec.allowPrivilegeEscalation === undefined ? 'unset' : String(sec.allowPrivilegeEscalation),
+              'PSA restricted requires allowPrivilegeEscalation: false.', 'Set allowPrivilegeEscalation: false.');
+          }
+
+          const runAsNonRoot = sec.runAsNonRoot !== undefined ? sec.runAsNonRoot : podSec.runAsNonRoot;
+          if (runAsNonRoot !== true) {
+            add(`${path}.securityContext.runAsNonRoot`,
+              runAsNonRoot === undefined ? 'unset' : String(runAsNonRoot),
+              'PSA restricted requires runAsNonRoot: true.', 'Set runAsNonRoot: true (pod or container).');
+          }
+
+          const runAsUser = sec.runAsUser !== undefined ? sec.runAsUser : podSec.runAsUser;
+          if (runAsUser === 0) {
+            add(`${path}.securityContext.runAsUser`, '0',
+              'PSA restricted forbids UID 0.', 'Remove runAsUser: 0 or use a non-root UID.');
+          }
+
+          const cSeccomp = psaSeccompType(sec.seccompProfile);
+          const effectiveSeccomp = cSeccomp || podSeccomp;
+          if (!effectiveSeccomp || (effectiveSeccomp !== 'RuntimeDefault' && effectiveSeccomp !== 'Localhost')) {
+            add(`${path}.securityContext.seccompProfile.type`, effectiveSeccomp || 'unset',
+              'PSA restricted requires RuntimeDefault or Localhost seccomp.',
+              'Set seccompProfile.type: RuntimeDefault on the pod or container.');
+          }
+        } else if (level === 'baseline') {
+          const cSeccomp = psaSeccompType(sec.seccompProfile);
+          if (cSeccomp === 'Unconfined') {
+            add(`${path}.securityContext.seccompProfile.type`, 'Unconfined',
+              'PSA baseline forbids Unconfined seccomp.', 'Omit or use RuntimeDefault.');
+          }
+        }
+      }
+
+      // Restricted: if no containers had seccomp and pod also lacks it, already flagged per-container.
+      // If pod has no containers, nothing else to check.
+      return { level, passed: violations.length === 0, violations };
+    }
+
+    function evaluatePsaGates(podSpec, psa) {
+      const enforceLevel = normalizePsaLevel(psa.enforce);
+      const warnLevel = normalizePsaLevel(psa.warn);
+      const auditLevel = normalizePsaLevel(psa.audit);
+
+      const enforce = evaluatePsaProfile(podSpec, enforceLevel || 'privileged');
+      const warn = warnLevel ? evaluatePsaProfile(podSpec, warnLevel) : { level: '', passed: true, violations: [] };
+      const audit = auditLevel ? evaluatePsaProfile(podSpec, auditLevel) : { level: '', passed: true, violations: [] };
+
+      const warnOnly = [];
+      const seen = new Set(enforce.violations.map((v) => `${v.field}|${v.reason}`));
+      for (const v of warn.violations) {
+        const key = `${v.field}|${v.reason}`;
+        if (seen.has(key)) continue;
+        warnOnly.push({ ...v, mode: 'warn' });
+        seen.add(key);
+      }
+      for (const v of audit.violations) {
+        const key = `${v.field}|${v.reason}`;
+        if (seen.has(key)) continue;
+        warnOnly.push({ ...v, mode: 'audit' });
+        seen.add(key);
+      }
+
+      return {
+        enforce: { ...enforce, level: enforceLevel },
+        warn: { ...warn, level: warnLevel },
+        audit: { ...audit, level: auditLevel },
+        blocking: enforceLevel && enforceLevel !== 'privileged' ? !enforce.passed : false,
+        warnViolations: warnOnly
+      };
+    }
+
     function updateUidHint() {
       const range = parseUidRange(el.ctxUidRange.value);
       el.uidRangeHint.textContent = `Valid UIDs: ${range.min} - ${range.max}`;
@@ -1402,7 +1841,9 @@ volumes:
 
     function updateSccBadge() {
       const n = Object.values(state.clusterSccs).filter(Boolean).length;
-      el.activeSccCountBadge.textContent = `${n} SCC${n === 1 ? '' : 's'}`;
+      const psa = state.psa?.enforce || readPsaFromUi().enforce;
+      const psaBit = psa ? ` · PSA ${psa}` : '';
+      el.activeSccCountBadge.textContent = `${n} SCC${n === 1 ? '' : 's'}${psaBit}`;
     }
 
     function updateGutter() {
@@ -1456,6 +1897,7 @@ volumes:
       customSccNames().forEach((name) => {
         custom[name] = SCC_DEFINITIONS[name];
       });
+      const psa = readPsaFromUi();
       return {
         y: el.yamlEditor.value,
         n: el.ctxNamespace.value,
@@ -1463,7 +1905,8 @@ volumes:
         u: el.ctxUidRange.value,
         m: el.ctxMcsCategory.value,
         s: Object.keys(state.clusterSccs).filter((k) => state.clusterSccs[k]),
-        c: custom
+        c: custom,
+        p: { e: psa.enforce, w: psa.warn, d: psa.audit }
       };
     }
 
@@ -1507,6 +1950,13 @@ volumes:
       if (typeof payload.a === 'string') el.ctxServiceAccount.value = payload.a;
       if (typeof payload.u === 'string') el.ctxUidRange.value = payload.u;
       if (typeof payload.m === 'string') el.ctxMcsCategory.value = payload.m;
+      if (payload.p && typeof payload.p === 'object') {
+        writePsaToUi({
+          enforce: payload.p.e,
+          warn: payload.p.w,
+          audit: payload.p.d
+        });
+      }
       if (payload.c && typeof payload.c === 'object') {
         Object.entries(payload.c).forEach(([name, def]) => {
           if (def && typeof def === 'object') registerSccDefinition({ ...def, name, custom: true });
@@ -1674,6 +2124,11 @@ volumes:
         });
         syncSccCheckboxesFromState();
       }
+      if (ctx?.psa) {
+        writePsaToUi(ctx.psa);
+      } else {
+        writePsaToUi({ enforce: '', warn: '', audit: '' });
+      }
       updateGutter();
       updateUidHint();
       updateSccBadge();
@@ -1686,7 +2141,9 @@ volumes:
       state.mutations = [];
       state.matchedScc = null;
       state.admitted = false;
+      state.psaResult = null;
       state.rawYaml = el.yamlEditor.value;
+      state.psa = readPsaFromUi();
 
       if (el.evalOrderRow) el.evalOrderRow.textContent = '';
 
@@ -1732,12 +2189,14 @@ volumes:
       const evaluationOrder = sortSccs(availableSccs);
       const evaluatedReports = [];
       let winningScc = null;
+      let winningReport = null;
 
       for (const sccName of evaluationOrder) {
         const report = testPodAgainstScc(podSpec, SCC_DEFINITIONS[sccName], sccName, nsUidRange, mcsLevel);
         evaluatedReports.push(report);
         if (report.passed) {
           winningScc = sccName;
+          winningReport = report;
           state.mutations = report.mutations;
           break;
         }
@@ -1748,44 +2207,85 @@ volumes:
 
       const orderText = `Tried in OpenShift order (priority ↓, then most restrictive): ${evaluationOrder.join(' → ')}`;
 
+      // PSA runs on the post-SCC-mutation pod when SCC admits; otherwise preview on as-submitted.
+      const psaPod = winningReport
+        ? applyMutationsToPodSpec(podSpec, winningReport.mutations)
+        : podSpec;
+      const psaResult = evaluatePsaGates(psaPod, state.psa);
+      state.psaResult = psaResult;
+
       if (winningScc) {
         state.matchedScc = winningScc;
-        state.admitted = true;
-        state.violations = [];
-        renderAdmissionSuccess(winningScc, state.mutations, orderText, evaluationOrder);
+        state.admitted = !psaResult.blocking;
+        state.violations = psaResult.blocking
+          ? psaResult.enforce.violations.map((v) => ({ ...v, gate: 'PSA', mode: 'enforce' }))
+          : [];
+        renderDualAdmission({
+          sccPassed: true,
+          sccName: winningScc,
+          sccReports: evaluatedReports,
+          mutations: state.mutations,
+          orderText,
+          evaluationOrder,
+          psaResult
+        });
       } else {
         state.admitted = false;
         state.matchedScc = null;
-        state.violations = evaluatedReports.flatMap((r) => r.violations);
-        renderAdmissionFailure(evaluatedReports, orderText);
+        state.violations = evaluatedReports.flatMap((r) => r.violations.map((v) => ({ ...v, gate: 'SCC' })));
+        renderDualAdmission({
+          sccPassed: false,
+          sccName: null,
+          sccReports: evaluatedReports,
+          mutations: [],
+          orderText,
+          evaluationOrder,
+          psaResult
+        });
       }
 
       updateRbacSnippets();
+      updateSccBadge();
       scheduleShareUrlSync();
     }
 
-    function renderAdmissionSuccess(sccName, mutations, orderText, evaluationOrder) {
-      el.verdictCard.className = 'verdict verdict--ok';
-      el.verdictTitle.innerHTML = `<span class="text-ok">Admission allowed</span>`;
-      const skipped = evaluationOrder.slice(0, evaluationOrder.indexOf(sccName));
-      const extra = skipped.length
-        ? ` Earlier candidates failed: ${skipped.join(', ')}.`
-        : (sccName === 'anyuid' && state.clusterSccs['restricted-v2']
-          ? ' Note: anyuid has Priority 10 so it wins over restricted-v2 even for pods that would also pass restricted-v2.'
-          : '');
-      el.verdictSubtitle.textContent = `Pod satisfies '${sccName}' and would be admitted.${extra}`;
-      el.evalOrderRow.textContent = orderText;
-      el.matchedSccPill.className = 'scc-tag scc-tag--ok';
-      el.matchedSccPill.textContent = sccName;
-      el.violationCountBadge.textContent = '0';
-      el.mutationCountBadge.textContent = `${mutations.length}`;
-      el.violationsContainer.innerHTML = `
-        <div class="border border-line border-l-[3px] border-l-ok bg-okBg p-3 text-xs text-ink">
-          <div class="font-heading font-bold mb-1">No SCC blockers</div>
-          Conforms to <strong>${esc(sccName)}</strong>.
-          OpenShift records the winner on the pod as <span class="font-mono">openshift.io/scc</span>.
-        </div>`;
-      renderMutations(mutations);
+    function setPsaPill(psaResult) {
+      if (!el.psaPill) return;
+      el.psaPill.style.borderColor = '';
+      el.psaPill.style.color = '';
+      const level = psaResult?.enforce?.level || '';
+      if (!level) {
+        if (psaResult?.warnViolations?.length) {
+          el.psaPill.className = 'scc-tag';
+          el.psaPill.style.borderColor = '#795600';
+          el.psaPill.style.color = '#795600';
+          const w = psaResult.warn?.level || psaResult.audit?.level || 'on';
+          el.psaPill.textContent = `warn ${w}`;
+          return;
+        }
+        el.psaPill.className = 'scc-tag';
+        el.psaPill.textContent = 'none';
+        return;
+      }
+      if (level === 'privileged') {
+        el.psaPill.className = 'scc-tag scc-tag--ok';
+        el.psaPill.textContent = 'privileged (open)';
+        return;
+      }
+      if (psaResult.blocking) {
+        el.psaPill.className = 'scc-tag scc-tag--deny';
+        el.psaPill.textContent = `${level} · deny`;
+        return;
+      }
+      if (psaResult.warnViolations?.length) {
+        el.psaPill.className = 'scc-tag';
+        el.psaPill.style.borderColor = '#795600';
+        el.psaPill.style.color = '#795600';
+        el.psaPill.textContent = `${level} · warn`;
+        return;
+      }
+      el.psaPill.className = 'scc-tag scc-tag--ok';
+      el.psaPill.textContent = `${level} · allow`;
     }
 
     function renderViolationCard(v) {
@@ -1794,10 +2294,18 @@ volumes:
       const lineBadge = line
         ? `<span class="jump-line" title="Jump to YAML">L${line}</span>`
         : `<span class="jump-line" title="Line not found">—</span>`;
+      const gate = v.gate === 'PSA' ? 'PSA' : 'SCC';
+      const mode = v.mode && v.mode !== 'enforce' ? ` ${v.mode}` : '';
+      const gateClass = gate === 'PSA'
+        ? (v.mode === 'warn' || v.mode === 'audit' ? 'gate-badge--warn' : 'gate-badge--psa')
+        : 'gate-badge--scc';
       return `
         <div class="finding space-y-2"${lineAttr} role="button" tabindex="0" title="Jump to field in YAML">
           <div class="flex items-start justify-between gap-2">
-            <span class="font-mono text-bad font-semibold text-[11px] break-all">${esc(v.field)}</span>
+            <div class="flex items-center gap-1.5 min-w-0">
+              <span class="gate-badge ${gateClass}">${gate}${mode}</span>
+              <span class="font-mono text-bad font-semibold text-[11px] break-all">${esc(v.field)}</span>
+            </div>
             <div class="flex items-center gap-1.5 shrink-0">
               ${lineBadge}
               <span class="font-mono text-[10px] text-mute whitespace-nowrap">= ${esc(v.val)}</span>
@@ -1808,30 +2316,115 @@ volumes:
         </div>`;
     }
 
-    function renderAdmissionFailure(reports, orderText) {
-      el.verdictCard.className = 'verdict verdict--deny';
-      el.verdictTitle.innerHTML = `<span class="text-bad">Admission forbidden</span>`;
-      el.verdictSubtitle.textContent = 'Unable to validate against any granted Security Context Constraint. Click a violation to jump to the YAML line.';
+    function renderPsaWarnSection(psaResult) {
+      if (!psaResult?.warnViolations?.length) return '';
+      const withLines = attachLineNumbers(psaResult.warnViolations);
+      return `<div class="mb-4">
+        <div class="text-[11px] font-heading font-bold text-warn mb-2">
+          PSA warn/audit (${withLines.length}) — does not block
+        </div>
+        <div class="space-y-2">${withLines.map(renderViolationCard).join('')}</div>
+      </div>`;
+    }
+
+    function renderDualAdmission({ sccPassed, sccName, sccReports, mutations, orderText, evaluationOrder, psaResult }) {
+      setPsaPill(psaResult);
       el.evalOrderRow.textContent = orderText || '';
-      el.matchedSccPill.className = 'scc-tag scc-tag--deny';
-      el.matchedSccPill.textContent = 'None matched';
-      el.violationCountBadge.textContent = `${state.violations.length}`;
-      el.mutationCountBadge.textContent = '0';
 
-      let html = '';
-      reports.forEach((r) => {
-        const withLines = attachLineNumbers(r.violations);
-        html += `<div class="mb-4">
-          <div class="text-[11px] font-heading font-bold text-bad mb-2">
-            Why ${esc(r.sccName)} failed (${withLines.length})
+      if (!sccPassed) {
+        el.verdictCard.className = 'verdict verdict--deny';
+        el.verdictTitle.innerHTML = `<span class="text-bad">Forbidden by SCC</span>`;
+        el.verdictSubtitle.textContent = 'No granted Security Context Constraint accepts this pod. PSA was not reached as a hard gate (preview below if configured).';
+        el.matchedSccPill.className = 'scc-tag scc-tag--deny';
+        el.matchedSccPill.textContent = 'None matched';
+        el.mutationCountBadge.textContent = '0';
+
+        let html = '';
+        sccReports.forEach((r) => {
+          const withLines = attachLineNumbers(r.violations.map((v) => ({ ...v, gate: 'SCC' })));
+          html += `<div class="mb-4">
+            <div class="text-[11px] font-heading font-bold text-bad mb-2">
+              Why ${esc(r.sccName)} failed (${withLines.length})
+            </div>
+            <div class="space-y-2">${withLines.map(renderViolationCard).join('')}</div>
+          </div>`;
+        });
+        if (psaResult?.enforce?.level && psaResult.enforce.level !== 'privileged' && !psaResult.enforce.passed) {
+          const withLines = attachLineNumbers(psaResult.enforce.violations.map((v) => ({ ...v, gate: 'PSA', mode: 'preview' })));
+          html += `<div class="mb-4">
+            <div class="text-[11px] font-heading font-bold text-mute mb-2">
+              PSA preview (enforce=${esc(psaResult.enforce.level)}) — would also deny (${withLines.length})
+            </div>
+            <div class="space-y-2">${withLines.map(renderViolationCard).join('')}</div>
+          </div>`;
+        }
+        html += renderPsaWarnSection(psaResult);
+        el.violationsContainer.innerHTML = html;
+        el.violationCountBadge.textContent = `${state.violations.length + (psaResult?.warnViolations?.length || 0)}`;
+        el.mutationsContainer.innerHTML = `<div class="text-mute text-center py-4">No mutations (pod rejected by SCC).</div>`;
+        switchTab('violations');
+        return;
+      }
+
+      // SCC passed
+      el.matchedSccPill.className = 'scc-tag scc-tag--ok';
+      el.matchedSccPill.textContent = sccName;
+      el.mutationCountBadge.textContent = `${mutations.length}`;
+      renderMutations(mutations);
+
+      const skipped = evaluationOrder.slice(0, evaluationOrder.indexOf(sccName));
+      const sccNote = skipped.length
+        ? ` Earlier SCC candidates failed: ${skipped.join(', ')}.`
+        : (sccName === 'anyuid' && state.clusterSccs['restricted-v2']
+          ? ' Note: anyuid has Priority 10 so it wins over restricted-v2.'
+          : '');
+
+      if (psaResult.blocking) {
+        el.verdictCard.className = 'verdict verdict--deny';
+        el.verdictTitle.innerHTML = `<span class="text-bad">Forbidden by PSA</span>`;
+        el.verdictSubtitle.textContent = `SCC '${sccName}' would admit the pod, but namespace enforce=${psaResult.enforce.level} rejects the post-mutation security context.${sccNote}`;
+        const withLines = attachLineNumbers(psaResult.enforce.violations.map((v) => ({ ...v, gate: 'PSA', mode: 'enforce' })));
+        let html = `
+          <div class="border border-line border-l-[3px] border-l-ok bg-okBg p-3 text-xs text-ink mb-4">
+            <div class="font-heading font-bold mb-1">SCC gate passed</div>
+            Winning SCC <strong>${esc(sccName)}</strong> accepts the pod
+            (annotation <span class="font-mono">openshift.io/scc</span>).
+            PSA still blocks create/update when <span class="font-mono">enforce</span> is set.
           </div>
-          <div class="space-y-2">${withLines.map(renderViolationCard).join('')}</div>
-        </div>`;
-      });
+          <div class="mb-4">
+            <div class="text-[11px] font-heading font-bold text-bad mb-2">
+              PSA enforce=${esc(psaResult.enforce.level)} (${withLines.length})
+            </div>
+            <div class="space-y-2">${withLines.map(renderViolationCard).join('')}</div>
+          </div>`;
+        html += renderPsaWarnSection(psaResult);
+        el.violationsContainer.innerHTML = html;
+        el.violationCountBadge.textContent = `${withLines.length + (psaResult.warnViolations?.length || 0)}`;
+        switchTab('violations');
+        return;
+      }
 
+      const hasWarn = psaResult.warnViolations?.length > 0;
+      el.verdictCard.className = hasWarn ? 'verdict verdict--warn' : 'verdict verdict--ok';
+      el.verdictTitle.innerHTML = hasWarn
+        ? `<span class="text-warn">Allowed (PSA warnings)</span>`
+        : `<span class="text-ok">Admission allowed</span>`;
+      const psaBit = psaResult.enforce.level
+        ? ` PSA enforce=${psaResult.enforce.level} allows the mutated pod.`
+        : ' PSA enforce is unset (no PSA block).';
+      el.verdictSubtitle.textContent = `Pod satisfies '${sccName}' and would be admitted.${psaBit}${sccNote}`;
+
+      let html = `
+        <div class="border border-line border-l-[3px] border-l-ok bg-okBg p-3 text-xs text-ink mb-4">
+          <div class="font-heading font-bold mb-1">Both gates clear</div>
+          SCC <strong>${esc(sccName)}</strong> admits the pod${psaResult.enforce.level ? `; PSA enforce=<strong>${esc(psaResult.enforce.level)}</strong> allows the post-mutation spec` : ''}.
+        </div>`;
+      html += renderPsaWarnSection(psaResult);
+      if (!hasWarn) {
+        html += `<div class="text-mute text-xs px-1">No SCC or PSA blockers.</div>`;
+      }
       el.violationsContainer.innerHTML = html;
-      el.mutationsContainer.innerHTML = `<div class="text-mute text-center py-4">No mutations (pod rejected).</div>`;
-      switchTab('violations');
+      el.violationCountBadge.textContent = `${psaResult.warnViolations?.length || 0}`;
     }
 
     function renderMutations(mutations) {
@@ -1849,6 +2442,14 @@ volumes:
         </div>`).join('');
     }
 
+    function clearPsaPill(label) {
+      if (!el.psaPill) return;
+      el.psaPill.className = 'scc-tag';
+      el.psaPill.style.borderColor = '';
+      el.psaPill.style.color = '';
+      el.psaPill.textContent = label || '—';
+    }
+
     function showParseError(msg) {
       el.verdictCard.className = 'verdict verdict--warn';
       el.verdictTitle.innerHTML = `<span class="text-warn">YAML syntax error</span>`;
@@ -1856,6 +2457,7 @@ volumes:
       if (el.evalOrderRow) el.evalOrderRow.textContent = '';
       el.matchedSccPill.className = 'scc-tag';
       el.matchedSccPill.textContent = 'Parse error';
+      clearPsaPill('—');
       el.violationsContainer.innerHTML = `<div class="border border-line bg-warnBg p-3 text-xs text-ink">${esc(msg)}</div>`;
       el.violationCountBadge.textContent = '!';
     }
@@ -1867,6 +2469,7 @@ volumes:
       if (el.evalOrderRow) el.evalOrderRow.textContent = '';
       el.matchedSccPill.className = 'scc-tag';
       el.matchedSccPill.textContent = 'N/A';
+      clearPsaPill('—');
       el.violationsContainer.innerHTML = `<div class="text-mute text-xs p-2">Paste a resource with containers / securityContext.</div>`;
     }
 
@@ -1877,6 +2480,7 @@ volumes:
       if (el.evalOrderRow) el.evalOrderRow.textContent = '';
       el.matchedSccPill.className = 'scc-tag';
       el.matchedSccPill.textContent = 'Waiting';
+      clearPsaPill('—');
       el.violationsContainer.innerHTML = '';
       el.mutationsContainer.innerHTML = '';
     }
@@ -1887,6 +2491,7 @@ volumes:
       el.verdictSubtitle.textContent = 'Enable at least one SCC on the ServiceAccount in Cluster context.';
       el.matchedSccPill.className = 'scc-tag scc-tag--deny';
       el.matchedSccPill.textContent = 'None';
+      clearPsaPill('—');
       el.violationsContainer.innerHTML = `<div class="text-mute text-xs p-2">OpenShift cannot admit a pod if the service account has no usable SCCs.</div>`;
     }
 
@@ -2058,12 +2663,29 @@ volumes:
         if (doc.kind === 'Namespace' || doc.kind === 'Project') {
           const name = doc.metadata?.name;
           const ann = doc.metadata?.annotations || {};
+          const labels = doc.metadata?.labels || {};
           if (name) el.ctxNamespace.value = name;
           if (ann['openshift.io/sa.scc.uid-range']) {
             el.ctxUidRange.value = ann['openshift.io/sa.scc.uid-range'];
           }
           if (ann['openshift.io/sa.scc.mcs']) {
             el.ctxMcsCategory.value = ann['openshift.io/sa.scc.mcs'];
+          }
+          const psaEnforce = normalizePsaLevel(labels['pod-security.kubernetes.io/enforce']);
+          const psaWarn = normalizePsaLevel(labels['pod-security.kubernetes.io/warn']);
+          const psaAudit = normalizePsaLevel(labels['pod-security.kubernetes.io/audit']);
+          if (psaEnforce || psaWarn || psaAudit) {
+            writePsaToUi({
+              enforce: psaEnforce || el.ctxPsaEnforce?.value,
+              warn: psaWarn || el.ctxPsaWarn?.value,
+              audit: psaAudit || el.ctxPsaAudit?.value
+            });
+            const bits = [
+              psaEnforce && `enforce=${psaEnforce}`,
+              psaWarn && `warn=${psaWarn}`,
+              psaAudit && `audit=${psaAudit}`
+            ].filter(Boolean);
+            notes.push(`PSA ${bits.join(', ')}`);
           }
           foundNs = true;
           notes.push(`${doc.kind} ${name || ''}`.trim());
@@ -2133,7 +2755,7 @@ volumes:
 
       const grantedKnown = Object.keys(state.clusterSccs).filter((n) => state.clusterSccs[n]);
       let msg = `Imported ${docs.length} object(s).`;
-      if (foundNs) msg += ` Namespace annotations applied.`;
+      if (foundNs) msg += ` Namespace annotations/labels applied.`;
       if (importedSccDefs) msg += ` Loaded ${importedSccDefs} SCC definition(s).`;
       if (importedCustom.length) msg += ` Custom: ${importedCustom.join(', ')}.`;
       msg += ` SCCs for ${sa}: ${grantedKnown.join(', ') || 'none'}.`;
@@ -2179,7 +2801,8 @@ oc get sa ${sa} -n ${ns} -o yaml > sa.yaml
 # 4) SCC definitions — include custom SCCs (required to simulate them)
 oc get scc -o yaml > sccs.yaml
 
-# Then upload ns.yaml + rb.yaml + sccs.yaml (and crb-scc.yaml if needed).`;
+# Then upload ns.yaml + rb.yaml + sccs.yaml (and crb-scc.yaml if needed).
+# Namespace labels pod-security.kubernetes.io/{enforce,warn,audit} set PSA in the app.`;
       }
       if (el.ocSccSubjectReview) {
         el.ocSccSubjectReview.textContent = `oc adm policy scc-subject-review -z ${sa} -n ${ns} -f workload.yaml`;
@@ -2228,10 +2851,11 @@ roleRef:
     function bindEls() {
       [
         'yamlEditor', 'gutter', 'detectedKind', 'containerCount', 'verdictCard', 'verdictTitle',
-        'verdictSubtitle', 'verdictIconContainer', 'matchedSccPill', 'violationsContainer',
+        'verdictSubtitle', 'verdictIconContainer', 'matchedSccPill', 'psaPill', 'violationsContainer',
         'mutationsContainer', 'violationCountBadge', 'mutationCountBadge', 'clusterDrawer',
         'toggleClusterDrawerBtn', 'closeDrawerBtn', 'activeSccCountBadge', 'ctxNamespace',
-        'ctxServiceAccount', 'ctxUidRange', 'ctxMcsCategory', 'uidRangeHint', 'cliGrantCmd',
+        'ctxServiceAccount', 'ctxUidRange', 'ctxMcsCategory', 'ctxPsaEnforce', 'ctxPsaWarn',
+        'ctxPsaAudit', 'uidRangeHint', 'cliGrantCmd',
         'yamlRoleBindingSnippet', 'validateBtn', 'autoFixBtn', 'copyYamlBtn', 'evalOrderRow',
         'ocSccSubjectReview', 'ocSccWhoCan', 'ocContextExport', 'ctxImportEditor',
         'ctxImportStatus', 'ctxImportFiles', 'ctxImportPasteBtn', 'shareLinkBtn',
@@ -2278,6 +2902,16 @@ roleRef:
         input.addEventListener('input', () => {
           updateUidHint();
           evaluateSccAdmission();
+        });
+      });
+
+      [el.ctxPsaEnforce, el.ctxPsaWarn, el.ctxPsaAudit].forEach((sel) => {
+        if (!sel) return;
+        sel.addEventListener('change', () => {
+          state.psa = readPsaFromUi();
+          updateSccBadge();
+          evaluateSccAdmission();
+          scheduleShareUrlSync();
         });
       });
 

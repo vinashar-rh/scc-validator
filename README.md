@@ -2,7 +2,7 @@
 
 **Paste a pod YAML and see why OpenShift rejects it — in your browser, no cluster login required.**
 
-Client-side OpenShift **Security Context Constraint (SCC)** admission simulator.
+Client-side OpenShift **Security Context Constraint (SCC)** + **Pod Security Admission (PSA)** simulator.
 
 ![SCC Validator showing an admission forbidden result for a failing workload](docs/scc-validator.png)
 
@@ -10,8 +10,9 @@ Live app: https://vinashar-rh.github.io/scc-validator/
 
 Paste a workload YAML, set (or import) the project / ServiceAccount context, and see:
 
-- whether admission would **allow** or **forbid** the pod
+- whether **SCC** admission would **allow** or **forbid** the pod
 - **which SCC wins** (OpenShift order: higher priority → more restrictive → name)
+- whether **PSA** (`enforce` / `warn` / `audit`) would still block the **post-SCC-mutation** pod
 - **why other granted SCCs failed**
 - **mutations** the winning SCC would inject
 - a ready-to-copy **RBAC grant** if you need a higher SCC
@@ -32,7 +33,8 @@ Use this tool when you need to **reason about SCC admission without burning clus
 **Not the right tool when**
 
 - You need a definitive cluster answer → use `oc create --dry-run=server` / `oc adm policy scc-subject-review`
-- The deny involves image `USER` inspection, or Pod Security Admission (PSA) on top of SCCs (PSA is not simulated yet)
+- The deny involves image `USER` inspection (not simulated)
+- You need exact PSA version pinning / Windows HostProcess edge cases beyond the built-in profiles
 - You must prove what is granted in a live project → export RoleBindings / run `oc adm policy who-can use sccs/...` (then import here if you want)
 
 This is a **teaching / diagnostics workbench**, not a replacement for the API server. Always confirm on-cluster with:
@@ -53,8 +55,9 @@ Workload YAML and cluster context stay in the browser. Evaluation does not uploa
 3. Open **Cluster context** and confirm:
    - namespace / ServiceAccount
    - UID range and SELinux MCS (or import them from cluster YAML)
+   - PSA labels (`enforce` / `warn` / `audit`) — default unset (SCC-only)
    - which SCCs that ServiceAccount may use (default: `restricted-v2` only)
-4. Read **Admission decision**. On deny, open **Violations** and click a finding to jump to the YAML line.
+4. Read **Admission decision** (SCC + PSA pills). On deny, open **Violations** (tagged SCC vs PSA) and click a finding to jump to the YAML line.
 5. Optional: **Auto-fix for restricted-v2**, or use the **RBAC** tab if the workload truly needs a higher SCC.
 6. Optional: **Copy share link** to send someone the same YAML + context.
 
@@ -91,7 +94,7 @@ Then **Upload YAML** or paste into the box and click **Apply pasted YAML**.
 
 | Export | Used for |
 |--------|----------|
-| Namespace / Project | Name, `openshift.io/sa.scc.uid-range`, `openshift.io/sa.scc.mcs` |
+| Namespace / Project | Name, `openshift.io/sa.scc.uid-range`, `openshift.io/sa.scc.mcs`, PSA labels `pod-security.kubernetes.io/{enforce,warn,audit}` |
 | RoleBinding / ClusterRoleBinding (`system:openshift:scc:*`) | SCCs available to the ServiceAccount |
 | ServiceAccount (optional) | SA name |
 | `SecurityContextConstraints` (`oc get scc`) | **Stock + custom SCC rules** the simulator will evaluate |
@@ -111,13 +114,15 @@ This is still an approximation of admission, not `oc create --dry-run=server`.
 ### Admission allowed
 
 - **Winning SCC** is the first granted SCC that accepts the pod under OpenShift sort order.
+- **PSA enforce** (if set) is evaluated on the **mutated** pod — same dual-gate order as the API server.
 - **Mutations** lists fields the SCC would inject (UID, `seccomp`, `openshift.io/scc`, etc.).
 - If both `restricted-v2` and `anyuid` are granted, a pod that could pass either often gets **`anyuid`** because it has priority **10**. Use the **anyuid priority** sample to see that.
 
 ### Admission forbidden
 
-- **Violations** are grouped **per granted SCC**.
-- Click a violation (or its `L12` badge) to jump to that line in the editor.
+- **Forbidden by SCC** — no granted SCC accepts the pod. Violations are grouped per SCC.
+- **Forbidden by PSA** — an SCC won, but `enforce=baseline|restricted` rejects the post-mutation spec. Use the **SCC≠PSA** sample (`anyuid` + `enforce=restricted` + root container).
+- Findings are tagged **SCC** or **PSA**. Click a row (or its `L12` badge) to jump to the YAML line.
 - **RBAC** suggests a least-privilege stock SCC grant (`oc adm policy add-scc-to-user` + RoleBinding). Prefer fixing the pod for `restricted-v2` when possible.
 
 ### Auto-fix
@@ -138,7 +143,8 @@ This is still an approximation of admission, not `oc create --dry-run=server`.
 | Privileged agent | DaemonSet needing `privileged` |
 | anyuid priority | Clean pod with `restricted-v2` **and** `anyuid` checked → `anyuid` wins |
 | Custom SCC | Pod with `NET_ADMIN` + imported `netadmin-nonroot` SCC |
-| Clean microservice | Passes `restricted-v2` |
+| SCC≠PSA | `anyuid` admits root pod; PSA `enforce=restricted` still forbids |
+| Clean microservice | Passes `restricted-v2` (and PSA restricted if you enable it) |
 
 ---
 
@@ -148,6 +154,7 @@ This is still an approximation of admission, not `oc create --dry-run=server`.
 
 - workload YAML  
 - namespace, ServiceAccount, UID range, MCS  
+- PSA enforce / warn / audit  
 - which SCCs are checked  
 - imported custom SCC definitions (when present)
 
@@ -163,9 +170,9 @@ Large YAML is gzip-compressed in the hash when the browser supports `Compression
 
 **Custom SCCs:** supported when you paste or upload `kind: SecurityContextConstraints` YAML (`oc get scc`). Their capabilities, volumes, host flags, runAsUser strategy, priority, and related fields are loaded into the same evaluator.
 
-Checks include (among others): hostNetwork / hostPID / hostIPC, hostPort, volume types, privileged, capabilities, `allowPrivilegeEscalation`, runAsUser / MustRunAsRange / MustRunAsNonRoot, fsGroup range, SELinux MCS, seccomp, and typical mutations.
+Checks include (among others): hostNetwork / hostPID / hostIPC, hostPort, volume types, privileged, capabilities, `allowPrivilegeEscalation`, runAsUser / MustRunAsRange / MustRunAsNonRoot, fsGroup range, SELinux MCS, seccomp, typical SCC mutations, and PSA **baseline** / **restricted** profile controls (capabilities, volumes, non-root, seccomp, host namespaces, etc.).
 
-It does **not** fully reimplement OpenShift admission. Still missing or approximate: live image `USER` inspection, Pod Security Admission (PSA), full sysctl / flexVolume matrices, and some edge-case SCC fields. Treat on-cluster dry-run as source of truth.
+It does **not** fully reimplement OpenShift admission. Still missing or approximate: live image `USER` inspection, PSA version labels, full sysctl / flexVolume matrices, and some edge-case SCC fields. Treat on-cluster dry-run as source of truth.
 
 ---
 
